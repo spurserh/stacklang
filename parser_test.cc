@@ -664,6 +664,29 @@ fprintf(stderr, "%s\n", top->DebugString(0).c_str());
 	EXPECT_NOT_NULL(compiler::AsA<compiler::IntType*>(top_decl->GetType()));
 }
 
+DECLARE_TEST(StructParam)
+{
+	const char* src = R"(
+struct Foo {
+	int a = 3;
+	int b = 1 + a / 2;
+};
+int top(Foo v) {
+	return v.a + v.b;
+}
+	)";
+
+	compiler::Expr* top = TestSingleFunctionSingleReturn(src);
+fprintf(stderr, "%s\n", top->DebugString(0).c_str());
+	EXPECT_EQ(CountNodes(top), 5);
+
+
+	auto top_bop = compiler::AsA<compiler::BinaryOp*>(top);
+	ASSERT(top_bop != nullptr);
+	EXPECT_EQ(top_bop->GetOp(), "+");
+
+}
+
 // Foo f() as function not decl
 
 // Template struct

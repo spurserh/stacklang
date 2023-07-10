@@ -48,14 +48,14 @@ map<string, int64> GetAllUnaryOperatorsWithPrecedence() {
 		++next_prec;
 	};
 
-	add_with_prec({".", "->", "++", "--"});
+	add_with_prec({"++", "--"});
 	add_with_prec({"!", "~", "*", "&", "-", "+"});
 
 	return ret;
 }
 
 set<string> GetAllUnaryPostfixOperators() {
-	return {"++", "--"};
+	return {"++", "--", ".", "->"};
 }
 
 set<string> GetAllInfixOperators() {
