@@ -607,13 +607,12 @@ int top(int x, int y) {
 
 }
 
-#if 1
-DECLARE_TEST(Struct)
+DECLARE_TEST(StructDecl)
 {
 	const char* src = R"(
 struct top {
 	int a = 3;
-	int b = a;
+	int b = 1 + a / 2;
 };
 	)";
 
@@ -626,7 +625,44 @@ fprintf(stderr, "%s\n", top->DebugString(0).c_str());
 	EXPECT_EQ(top_decl->GetInnerDecls().len(), 2);
 	EXPECT_EQ(top_decl->GetTemplateParams().len(), 0);
 }
-#endif
+
+
+DECLARE_TEST(TemplateStruct)
+{
+	const char* src = R"(
+template<typename T>
+struct top {
+	T a = 3;
+	int b = 1 + a / 2;
+};
+	)";
+
+	compiler::Decl* top = ParseAndGetTop(src);
+
+fprintf(stderr, "%s\n", top->DebugString(0).c_str());
+
+	auto top_decl = compiler::AsA<compiler::StructDecl*>(top);
+	ASSERT(top_decl != nullptr);
+	EXPECT_EQ(top_decl->GetInnerDecls().len(), 2);
+	EXPECT_EQ(top_decl->GetTemplateParams().len(), 1);
+	EXPECT_EQ(top_decl->GetTemplateParams()[0]->GetKind(), 
+			  compiler::TemplateParamKind_Type);
+}
+
+DECLARE_TEST(GlobalDecl)
+{
+	const char* src = R"(
+int top = 100;
+	)";
+
+	compiler::Decl* top = ParseAndGetTop(src);
+
+fprintf(stderr, "%s\n", top->DebugString(0).c_str());
+
+	auto top_decl = compiler::AsA<compiler::VarDecl*>(top);
+	ASSERT(top_decl != nullptr);
+	EXPECT_NOT_NULL(compiler::AsA<compiler::IntType*>(top_decl->GetType()));
+}
 
 // Foo f() as function not decl
 

@@ -498,6 +498,9 @@ public:
 
   	  return ret;
     }
+    Type* GetType()const {
+    	return type_;
+    }
 private:
 	Type* type_ = nullptr;
 	Expr* init_ = nullptr;
@@ -682,6 +685,15 @@ struct Context {
 		top.decls.set(decl->GetName(), decl);
 		frames.set(0, top);
 	}
+
+  	void RemoveDecl(Decl* decl) {
+		ContextFrame top = frames.front();
+		if(!top.decls.contains(decl->GetName())) {
+			throw Status{.message = string("Declaration does not exist to remove ") + decl->GetName()};
+		}
+		top.decls.remove(decl->GetName());
+		frames.set(0, top);
+  	}
 };
 
 
@@ -1329,6 +1341,9 @@ fprintf(stderr, ">> ParseFuncDecl body %s\n", id.DebugString().c_str());
 	}
 
 	funcdecl->SetBody(body);
+
+	// Will be added by the caller
+//	context.RemoveDecl(funcdecl);
 	tokens_guard.deactivate();
 
 fprintf(stderr, ">> ParseFuncDecl finished %s\n", id.DebugString().c_str());
@@ -1347,16 +1362,14 @@ Decl* ParseDecl(Context& context, vector<Token>& tokens) {
 
 	vector<TemplateParam*> template_params;
 
+	context.PushFrame();
 	auto template_context_pop_guard = MakeLambdaGuard(
 		[&context]() {
 			context.PopFrame();
 	});
 
 	if(PeekAndConsume({"template"})) {
-		context.PushFrame();
 		template_params = ParseTemplateParams(context, tokens);
-	} else {
-		template_context_pop_guard.deactivate();
 	}
 
 	if(PeekAndConsume({"typedef"})) {
@@ -1421,12 +1434,20 @@ StructDecl* ParseStructDecl(Context& context,
 
 fprintf(stderr, ">> ParseStructDecl name %s\n", name_tok.content.c_str());
 
+	context.PushFrame();
+	auto template_context_pop_guard = MakeLambdaGuard(
+		[&context]() {
+			context.PopFrame();
+	});
+
 	vector<Decl*> inner_decls;
 
 	ConsumeOrError(tokens, {"{"});
 
 	while(!PeekAndConsumeUtil(tokens, {"}"})) {
-		inner_decls.push_back(ParseDecl(context, tokens));
+		Decl* decl = ParseDecl(context, tokens);
+		context.AddDecl(decl);
+		inner_decls.push_back(decl);
 	}
 
 	// TODO: inline decls
