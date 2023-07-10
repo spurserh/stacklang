@@ -29,13 +29,21 @@ void TestInitList() {
 	ExpectEq(foo.len(), 2);
 }
 
-
 void TestAdd1() {
 	vector<int64> foo;
 	foo.push_back(10);
 	assert(foo.len() == 1);
 	ExpectEq(foo[0], 10);
 }
+
+void TestPushFront() {
+	fprintf(stderr, "--- TestPushFront ---\n");
+	vector<int64> foo{100, 200};
+	foo.push_front(10);
+	assert(foo.len() == 3);
+	ExpectEq(foo[0], 10);
+}
+
 
 void TestRemove() {
 	vector<int64> foo;
@@ -73,6 +81,17 @@ void TestIterate() {
 	}
 }
 
+void TestSetOp() {
+	fprintf(stderr, "--- TestSetOp ---\n");
+	vector<int64> foo;
+	foo.push_back(10);
+	assert(foo.len() == 1);
+	ExpectEq(foo[0], 10);
+	foo.set(0, 11);
+	assert(foo.len() == 1);
+	ExpectEq(foo[0], 11);
+}
+
 }  // namespace
 
 }  // namespace stacklang
@@ -81,9 +100,11 @@ void TestIterate() {
 int main() {
 	stacklang::TestSimple();
 	stacklang::TestAdd1();
+	stacklang::TestPushFront();
 	stacklang::TestInitList();
 	stacklang::TestRemove();
 	stacklang::TestRemove2();
 	stacklang::TestIterate();
+	stacklang::TestSetOp();
 	return 0;
 }

@@ -41,6 +41,22 @@ private:
 	Status status_;
 };
 
+template<typename L>
+class Guard {
+public:
+	Guard(L l) : l_(l) { }
+	~Guard() {if(active_) { l_(); }}
+	void deactivate() { active_ = false; }
+private:
+	L l_;
+	bool active_ = true;
+};
+
+template<typename L>
+Guard<L> MakeLambdaGuard(L l) {
+	return l;
+}
+
 };  // stacklang
 
 #endif//UTILS_H

@@ -54,6 +54,10 @@ class string {
  		memcpy(storage + len_, other.storage_, other.len_);
  		return string(storage, new_len);
  	}
+ 	string& operator+=(string other) {
+ 		*this = (*this) + other;
+ 		return *this;
+ 	}
  	int64 len() const {
  		return len_;
  	}

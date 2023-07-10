@@ -5,6 +5,7 @@
 #include "vector.h"
 #include "set.h"
 #include "utils.h"
+#include "tokens.h"
 
 namespace stacklang {
 namespace compiler {
@@ -47,7 +48,7 @@ void filter_tokens(set<string>& tokens, int64 idx, char c) {
 }
 
 vector<string> Scan(string input) throws (Status) {
-	const set<string> special_tokens{"(", ")", "{", "}", ":", "::", ">=", ",", "+", ";", ">", ">>", "="};
+	const set<string> special_tokens = GetAllSpecialTokens();
 	const set<char> special_chars = init_special_chars(special_tokens);
 	const set<char> whitespaces{' ', '\t', '\n', '\r'};
 	const set<char> word_chars = init_word_chars();
@@ -135,7 +136,14 @@ vector<string> Scan(string input) throws (Status) {
 			}
 			filter_tokens(remaining_special_tokens, current_token.len(), next);
 
-			assert(remaining_special_tokens.size() > 0);
+			// Several special tokens one after another
+			if(remaining_special_tokens.size() == 0) {
+				complete_token();
+				// Put it back
+				input = string(next) + input;
+				debug_last_len = 0;
+				continue;
+			}
 
 			current_token = current_token + next;
 

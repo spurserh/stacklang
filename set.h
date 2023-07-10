@@ -4,6 +4,7 @@
 #include "types.h"
 
 #include "vector.h"
+#include "utils.h"
 
 // STL
 #include <initializer_list>
@@ -11,7 +12,6 @@
 
 namespace stacklang {
 
-// Immutable vector
 template<typename T>
 class set {
 public:
@@ -48,6 +48,11 @@ public:
 			storage_.push_back(value);
 		}
 	}
+	void add(set other) {
+		for(T v : other) {
+			add(v);
+		}
+	}
 
 	void remove(T value) {
 		if(!contains(value)) {
@@ -55,6 +60,7 @@ public:
 		}
 		vector<T> new_storage;
 		for(T v : storage_) {
+			// TODO: Just use <
 			if(v == value) {
 				continue;
 			}
@@ -63,10 +69,23 @@ public:
 		storage_ = new_storage;
 	}
 
-	typename vector<T>::iterator begin()const {
+	T get(T value)const throws(Status) {
+		// TODO: Inefficient
+		// TODO: Just use <
+		for(T v : storage_) {
+			if(v == value) {
+				return v;
+			}
+		}
+		throw Status{.message = "Couldn't find element"};
+	}
+
+	typedef typename vector<T>::iterator iterator;
+
+	iterator begin()const {
 		return storage_.begin();
 	}
-	typename vector<T>::iterator end()const {
+	iterator end()const {
 		return storage_.end();
 	}
 

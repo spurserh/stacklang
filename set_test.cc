@@ -1,4 +1,5 @@
 #include "set.h"
+#include "string.h"
 
 #include <cstdio>
 
@@ -66,6 +67,17 @@ void TestRemove() {
 }
 
 
+void TestAddSet() {
+	fprintf(stderr, "--- TestAddSet ---\n");
+	set<string> foo{"x", "y"};
+	set<string> bar{"a", "b"};
+	foo.add(bar);
+	ExpectEq(foo.size(), 4);
+	Expect(foo.contains("x"));
+	Expect(foo.contains("y"));
+	Expect(foo.contains("a"));
+	Expect(foo.contains("b"));
+}
 
 
 }  // namespace
@@ -77,6 +89,7 @@ int main() {
 	stacklang::TestSimple();
 	stacklang::TestInitList();
 	stacklang::TestAdd1();
+	stacklang::TestAddSet();
 	stacklang::TestAddRepeat();
 	stacklang::TestRemove();
 	return 0;

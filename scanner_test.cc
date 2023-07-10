@@ -45,20 +45,6 @@ int add(int x, int y) {
 }
 	)";
 
-#if 0
-	status_or<vector<string>> ret = compiler::Scan(src);
-
-	if(!ret.ok()) {
-		fprintf(stderr, "failed: %s\n", ret.status().message.c_str());
-		exit(1);
-	}
-
-	vector<string> ref{"int", "add", "(", "int", "x", ",", "int", "y", ")", "{",
-			"return", "x", ">", "y", ";",
-			"}"};
-	ExpectEq(ret.value(), 
-			ref);
-#endif
 	try {
 		vector<string> ret = compiler::Scan(src) throws();
 
@@ -72,6 +58,27 @@ int add(int x, int y) {
 		exit(1);
 	}
 }
+
+
+void TestTemplate() {
+	fprintf(stderr, "--- TestTemplate ---\n");
+
+	const char* src = R"(
+add1<int>(x + y);
+	)";
+
+	try {
+		vector<string> ret = compiler::Scan(src) throws();
+
+		vector<string> ref{"add1", "<", "int", ">", "(", "x", "+", "y", ")", ";"};
+		ExpectEq(ret, 
+				ref);
+	} catch(Status error) {
+		fprintf(stderr, "failed: %s\n", error.message.c_str());
+		exit(1);
+	}
+}
+
 
 #if 0
 void TestSimple2() {
@@ -145,6 +152,7 @@ int add(int x, int y) {
 
 int main() {
 	stacklang::TestSimple();
+	stacklang::TestTemplate();
 #if 0
 	stacklang::TestSimple2();
 	stacklang::TestUnrecognizedSpecial();

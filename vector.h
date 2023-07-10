@@ -2,6 +2,7 @@
 #define VECTOR_H
 
 #include "types.h"
+#include "utils.h"
 
 // STL
 #include <initializer_list>
@@ -9,7 +10,6 @@
 
 namespace stacklang {
 
-// Immutable vector
 template<typename T>
 class vector {
 public:
@@ -28,18 +28,33 @@ public:
 		storage_ = new_storage;
 	}
 
-	T operator[](int64 index) const {
-		assert(index >= 0);
-		assert(index < len_);
-		return storage_[index];
-	}
-
 	int64 len()const {
 		return len_;
 	}
 
 	bool empty()const {
 		return len_ == 0;
+	}
+
+
+	T operator[](int64 index) const throws() {
+		return storage_[index];
+	}
+
+	T at(int64 index)const throws() {
+		if(index < 0 || index >= len_) {
+			throw Status{.message = "Index out of bounds"};
+		}
+		return storage_[index];
+	}
+	void set(int64 index, T v) throws() {
+		// TODO: Very inefficient
+		T* new_storage = new T[len_ + 1];
+		for(int64 i=0;i<len_;++i) {
+			new_storage[i] = storage_[i];
+		}
+		new_storage[index] = v;
+		storage_ = new_storage;
 	}
 
 	void push_back(T value) {
@@ -51,6 +66,27 @@ public:
 		new_storage[len_] = value;
 		len_ += 1;
 		storage_ = new_storage;
+	}
+
+	void push_front(T value) {
+		// TODO: Very inefficient
+		T* new_storage = new T[len_ + 1];
+		for(int64 i=0;i<len_;++i) {
+			new_storage[i+1] = storage_[i];
+		}
+		new_storage[0] = value;
+		len_ += 1;
+		storage_ = new_storage;
+	}
+
+	T back()const {
+		assert(len_>0);
+		return storage_[len_-1];
+	}
+
+	T front()const {
+		assert(len_>0);
+		return storage_[0];
 	}
 
 	T pop_back(int64 n=1) {
