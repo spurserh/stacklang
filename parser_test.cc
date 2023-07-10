@@ -111,6 +111,13 @@ void ExpectNull(string test_name, T* a) {
 	}
 }
 
+void Assert(string test_name, bool cond) {
+	if(!cond) {
+		fprintf(stderr, "Assert failed! \n");
+		sTestsPassed.set(test_name, false);
+	}
+}
+
 void FailWithMessage(string test_name, string msg) {
 	fprintf(stderr, "FAIL: %s\n", msg.c_str());
 	sTestsPassed.set(test_name, false);
@@ -120,6 +127,7 @@ void FailWithMessage(string test_name, string msg) {
 #define EXPECT_NE(__a, __b) ExpectNe(__test_name, __a, __b)
 #define EXPECT_NOT_NULL(__a) ExpectNotNull(__test_name, __a)
 #define EXPECT_NULL(__a) ExpectNull(__test_name, __a)
+#define ASSERT(__a) {Assert(__test_name, __a);if(!(__a)) { return; }}
 #define FAIL(__msg) FailWithMessage(__test_name, __msg) 
 
 
@@ -136,8 +144,7 @@ int top(int x, int y) {
 }
 
 
-
-compiler::Expr* TestSingleFunctionSingleReturn(const char* src) {
+compiler::Decl* ParseAndGetTop(const char* src) {
 	compiler::Namespace parsed = TestParse(src);
 
 	compiler::Decl* top_decl = nullptr;
@@ -148,10 +155,20 @@ compiler::Expr* TestSingleFunctionSingleReturn(const char* src) {
 		}
 	}
 	assert(top_decl != nullptr);
-	compiler::Decl* decl = top_decl;
+	return top_decl;
+}
+
+vector<compiler::Stmt*> ParseAndGetTopBody(const char* src) {
+	compiler::Decl* decl = ParseAndGetTop(src);
 	auto func_decl = compiler::AsA<compiler::FuncDecl*>(decl);
 	assert(func_decl != nullptr);
 	vector<compiler::Stmt*> body = func_decl->GetBody();
+	return body;
+}
+
+compiler::Expr* TestSingleFunctionSingleReturn(const char* src) {
+
+	vector<compiler::Stmt*> body = ParseAndGetTopBody(src);
 	assert(body.len() == 1);
 	compiler::Stmt* first_stmt = body[0];
 	auto *return_stmt = compiler::AsA<compiler::ReturnStmt*>(first_stmt);
@@ -174,7 +191,7 @@ int top(int x, int y) {
 	compiler::Expr* top = TestSingleFunctionSingleReturn(src);
 
 	auto top_op = compiler::AsA<compiler::BinaryOp*>(top);
-	assert(top_op != nullptr);
+	ASSERT(top_op != nullptr);
 	EXPECT_EQ(top_op->GetOp(), "+");
 	EXPECT_EQ(CountNodes(top), 5);
 }
@@ -191,7 +208,7 @@ int top(int x, int y) {
 	compiler::Expr* top = TestSingleFunctionSingleReturn(src);
 
 	auto top_op = compiler::AsA<compiler::BinaryOp*>(top);
-	assert(top_op != nullptr);
+	ASSERT(top_op != nullptr);
 	EXPECT_EQ(top_op->GetOp(), "|");
 	EXPECT_EQ(CountNodes(top), 7);
 }
@@ -210,7 +227,7 @@ int top(int x, int y) {
 fprintf(stderr, "%s\n", top->DebugString(0).c_str());
 
 	auto top_op = compiler::AsA<compiler::BinaryOp*>(top);
-	assert(top_op != nullptr);
+	ASSERT(top_op != nullptr);
 	EXPECT_EQ(top_op->GetOp(), "*");
 	EXPECT_EQ(CountNodes(top), 6);
 }
@@ -226,7 +243,7 @@ int top(int x, int y) {
 	compiler::Expr* top = TestSingleFunctionSingleReturn(src);
 
 	auto top_op = compiler::AsA<compiler::BinaryOp*>(top);
-	assert(top_op != nullptr);
+	ASSERT(top_op != nullptr);
 	EXPECT_EQ(top_op->GetOp(), "/");
 	EXPECT_EQ(CountNodes(top), 6);
 }
@@ -243,7 +260,7 @@ int top(int x, int y) {
 	compiler::Expr* top = TestSingleFunctionSingleReturn(src);
 
 	auto top_op = compiler::AsA<compiler::BinaryOp*>(top);
-	assert(top_op != nullptr);
+	ASSERT(top_op != nullptr);
 	EXPECT_EQ(top_op->GetOp(), "+");
 	EXPECT_EQ(CountNodes(top), 5);
 }
@@ -261,7 +278,7 @@ int top(int x, int y) {
 	compiler::Expr* top = TestSingleFunctionSingleReturn(src);
 
 	auto top_op = compiler::AsA<compiler::BinaryOp*>(top);
-	assert(top_op != nullptr);
+	ASSERT(top_op != nullptr);
 	EXPECT_EQ(top_op->GetOp(), "+");
 	EXPECT_EQ(CountNodes(top), 4);
 	auto left_op = compiler::AsA<compiler::CastExpr*>(top_op->GetLeft());
@@ -283,7 +300,7 @@ int top(int x, int y) {
 
 fprintf(stderr, "top:\n{\n%s\n}\n", top_op->DebugString(0).c_str());
 
-	assert(top_op != nullptr);
+	ASSERT(top_op != nullptr);
 	EXPECT_EQ(top_op->GetOp(), "+");
 	EXPECT_EQ(CountNodes(top), 5);
 	auto left_op_cast = compiler::AsA<compiler::CastExpr*>(top_op->GetLeft());
@@ -303,7 +320,7 @@ int top(int x, int y) {
 	compiler::Expr* top = TestSingleFunctionSingleReturn(src);
 
 	auto top_top_unary = compiler::AsA<compiler::UnaryOp*>(top);
-	assert(top_top_unary != nullptr);
+	ASSERT(top_top_unary != nullptr);
 
 	EXPECT_EQ(top_top_unary->IsPostfix(), false);
 
@@ -322,11 +339,11 @@ int top(int x, int y) {
 	EXPECT_EQ(CountNodes(top), 4);
 
 	auto top_bop = compiler::AsA<compiler::BinaryOp*>(top);
-	assert(top_bop != nullptr);
+	ASSERT(top_bop != nullptr);
 	EXPECT_EQ(top_bop->GetOp(), "+");
 
 	auto uop = compiler::AsA<compiler::UnaryOp*>(top_bop->GetRight());
-	assert(uop != nullptr);
+	ASSERT(uop != nullptr);
 
 	EXPECT_EQ(uop->IsPostfix(), true);
 	EXPECT_EQ(uop->GetOp(), "++");
@@ -347,12 +364,12 @@ int top(int x, int y) {
 fprintf(stderr, "top %s\n", top->DebugString(0).c_str());
 
 	auto top_unary = compiler::AsA<compiler::UnaryOp*>(top);
-	assert(top_unary != nullptr);
+	ASSERT(top_unary != nullptr);
 	EXPECT_EQ(top_unary->GetOp(), "*");
 	EXPECT_EQ(top_unary->IsPostfix(), false);
 
 	auto sub_unary = compiler::AsA<compiler::UnaryOp*>(top_unary->GetSub());
-	assert(sub_unary != nullptr);
+	ASSERT(sub_unary != nullptr);
 	EXPECT_EQ(sub_unary->GetOp(), "++");
 	EXPECT_EQ(sub_unary->IsPostfix(), true);
 }
@@ -371,7 +388,7 @@ int top(int x, int y) {
 fprintf(stderr, "top %s\n", top->DebugString(0).c_str());
 
 	auto top_bop = compiler::AsA<compiler::BinaryOp*>(top);
-	assert(top_bop != nullptr);
+	ASSERT(top_bop != nullptr);
 	EXPECT_EQ(top_bop->GetOp(), ",");
 }
 
@@ -389,7 +406,7 @@ int top(int x, int y) {
 fprintf(stderr, "top %s\n", top->DebugString(0).c_str());
 
 	auto top_bop = compiler::AsA<compiler::BinaryOp*>(top);
-	assert(top_bop != nullptr);
+	ASSERT(top_bop != nullptr);
 	EXPECT_EQ(top_bop->GetOp(), ",");
 }
 
@@ -427,7 +444,7 @@ int top(int x, int y) {
 	EXPECT_EQ(CountNodes(top), 6);
 
 	auto top_call = compiler::AsA<compiler::FuncCall*>(top);
-	assert(top_call != nullptr);
+	ASSERT(top_call != nullptr);
 	EXPECT_EQ(top_call->GetCallee()->GetRef()->GetName(), "sum");
 }
 
@@ -467,7 +484,7 @@ int top(int x) {
 	EXPECT_EQ(CountNodes(top), 4);
 
 	auto top_call = compiler::AsA<compiler::FuncCall*>(top);
-	assert(top_call != nullptr);
+	ASSERT(top_call != nullptr);
 	EXPECT_EQ(top_call->GetCallee()->GetRef()->GetName(), "top");
 }
 
@@ -488,7 +505,7 @@ int top(int x, int y) {
 	EXPECT_EQ(CountNodes(top), 7);
 
 	auto top_uop = compiler::AsA<compiler::UnaryOp*>(top);
-	assert(top_uop != nullptr);
+	ASSERT(top_uop != nullptr);
 	EXPECT_EQ(top_uop->GetOp(), "++");
 	EXPECT_EQ(top_uop->IsPostfix(), false);
 }
@@ -533,7 +550,7 @@ int top(int x, int y) {
 fprintf(stderr, "%s\n", top->DebugString(0).c_str());
 
 	auto top_call = compiler::AsA<compiler::FuncCall*>(top);
-	assert(top_call != nullptr);
+	ASSERT(top_call != nullptr);
 	EXPECT_EQ(top_call->GetCallee()->GetRef()->GetName(), "add1");
 }
 
@@ -551,33 +568,85 @@ int top(int x, int y) {
 	)";
 
 	compiler::Expr* top = TestSingleFunctionSingleReturn(src);
+fprintf(stderr, "%s\n", top->DebugString(0).c_str());
 	EXPECT_EQ(CountNodes(top), 3);
 
-fprintf(stderr, "%s\n", top->DebugString(0).c_str());
 
 	auto top_bop = compiler::AsA<compiler::BinaryOp*>(top);
-	assert(top_bop != nullptr);
+	ASSERT(top_bop != nullptr);
 	EXPECT_EQ(top_bop->GetOp(), ">");
 
 	auto left_ref = compiler::AsA<compiler::DeclRef*>(top_bop->GetLeft());
-	assert(left_ref != nullptr);
+	ASSERT(left_ref != nullptr);
 	EXPECT_EQ(left_ref->GetTemplateArgs().len(), 1);
 	
 		auto left_func = compiler::AsA<compiler::FuncDecl*>(left_ref->GetRef());
-	assert(left_func != nullptr);
+	ASSERT(left_func != nullptr);
 	EXPECT_EQ(left_func->GetName(), "add1");
 }
 
-// TODO: Template type, template function call
-// Test template inference
 
-// TODO: Test type decl
+DECLARE_TEST(VarDecl)
+{
+	const char* src = R"(
+int top(int x, int y) {
+	int ret = 0;
+	ret = x + y;
+	return ret;
+}
+	)";
+
+	vector<compiler::Stmt*> body = ParseAndGetTopBody(src);
+	assert(body.len() == 3);
+
+	EXPECT_NOT_NULL(compiler::AsA<compiler::VarDecl*>(body[0]));
+	EXPECT_NOT_NULL(compiler::AsA<compiler::Expr*>(body[1]));
+	EXPECT_NOT_NULL(compiler::AsA<compiler::ReturnStmt*>(body[2]));
+
+
+
+}
+
+#if 1
+DECLARE_TEST(Struct)
+{
+	const char* src = R"(
+struct top {
+	int a = 3;
+	int b = a;
+};
+	)";
+
+	compiler::Decl* top = ParseAndGetTop(src);
+
+fprintf(stderr, "%s\n", top->DebugString(0).c_str());
+
+	auto top_decl = compiler::AsA<compiler::StructDecl*>(top);
+	ASSERT(top_decl != nullptr);
+	EXPECT_EQ(top_decl->GetInnerDecls().len(), 2);
+	EXPECT_EQ(top_decl->GetTemplateParams().len(), 0);
+}
+#endif
+
+// Foo f() as function not decl
+
+// Template struct
 
 
 }  // namespace
 }  // namespace stacklang
 
-int main() {
+int main(int argc, char **argv) {
+	if(argc == 2) {
+		stacklang::vector<stacklang::TestSpec> filtered_tests;
+		for(stacklang::TestSpec spec : stacklang::sTests) {
+			if(spec.name == argv[1]) {
+				filtered_tests.push_back(spec);
+			}
+		}
+		stacklang::sTests = filtered_tests;
+	}
+
 	for(stacklang::TestSpec spec : stacklang::sTests) {
 		fprintf(stderr, "--- %s ---\n", spec.name.c_str());
 		spec.func();

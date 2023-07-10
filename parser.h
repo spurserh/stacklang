@@ -129,22 +129,29 @@ private:
 };
 
 
-class Decl {
+class Stmt {
 public:
-  Decl(string name, LocationRef loc) : name_(name), loc_(loc) {
+	Stmt(LocationRef loc) : loc_(loc) { }
+	virtual string DebugString(int64 indent)const = 0;
+	LocationRef GetLoc()const {
+		return loc_;
+	}
+private:
+	LocationRef loc_;
+};
+
+class Decl : public Stmt {
+public:
+  Decl(string name, LocationRef loc) : Stmt(loc), name_(name) {
  	IsValidID(name, loc) throws();
   }
   virtual ~Decl() {} ;
   string GetName()const {
   	return name_;
   }
-  LocationRef GetLoc() const {
-  	return loc_;
-  }
   virtual string DebugString(int64 indent)const = 0;
 private:
   string name_;
-  LocationRef loc_;
 };
 
 enum TemplateParamKind {
@@ -226,19 +233,6 @@ public:
 private:
 	Decl* ref_;
 };
-
-
-class Stmt {
-public:
-	Stmt(LocationRef loc) : loc_(loc) { }
-	virtual string DebugString(int64 indent)const = 0;
-	LocationRef GetLoc()const {
-		return loc_;
-	}
-private:
-	LocationRef loc_;
-};
-
 
 class Expr : public Stmt {
 public:
@@ -485,8 +479,8 @@ private:
 
 class VarDecl : public Decl {
 public:
-	VarDecl(string name, LocationRef loc, Type* type) 
-	  : Decl(name, loc), type_(type) {
+	VarDecl(string name, LocationRef loc, Type* type, Expr* init) 
+	  : Decl(name, loc), type_(type), init_(init) {
 	}
 	~VarDecl() override {}
     string DebugString(int64 indent)const override {
@@ -495,17 +489,32 @@ public:
 	  stream << this;
       string ptr = stream.str().c_str();
 
-  	  return string("VarDecl ") + ptr + " (" 
+      string ret = string("VarDecl ") + ptr + " (" 
   	  	+ GetName() + " : " + type_->DebugString(indent) + ")";
+
+  	  if(init_ != nullptr) {
+  	  	ret += string(" = ") + init_->DebugString(0);
+  	  }
+
+  	  return ret;
     }
 private:
-	Type* type_;
+	Type* type_ = nullptr;
+	Expr* init_ = nullptr;
 };
 
 class FuncDecl : public TemplatedDecl {
 public:
-	FuncDecl(string name, vector<TemplateParam*> template_params, Type* return_type, vector<VarDecl*> parameters, vector<Stmt*> body, LocationRef loc) 
-	  : TemplatedDecl(name, template_params, loc), return_type_(return_type), parameters_(parameters), body_(body) {
+	FuncDecl(string name,
+			 vector<TemplateParam*> template_params,
+			 Type* return_type,
+			 vector<VarDecl*> parameters,
+			 vector<Stmt*> body,
+			 LocationRef loc) 
+	  : TemplatedDecl(name, template_params, loc),
+	  	return_type_(return_type),
+	  	parameters_(parameters),
+	  	body_(body) {
 	}
 	~FuncDecl() override {}
 	string DebugString(int64 indent)const override {
@@ -541,6 +550,36 @@ private:
 	vector<Stmt*> body_;
 };
 
+class StructDecl : public TemplatedDecl {
+public:
+	StructDecl(string name,
+			   bool declared_class,
+			   vector<TemplateParam*> template_params,
+			   vector<Decl*> inner_decls,
+			   LocationRef ref)
+	  : TemplatedDecl(name, template_params, ref),
+	    inner_decls_(inner_decls),
+	    declared_class_(declared_class) {
+	}
+	vector<Decl*> GetInnerDecls()const {
+		return inner_decls_;
+	}
+	string DebugString(int64 indent)const override {
+		string ret = declared_class_ ? "class " : "struct ";
+		ret += GetName() + " ";
+		ret += TemplateParamsString();
+		ret += string("\n") + FormatIndent(indent) + "{\n";
+		bool first = true;
+		for(Decl* decl : inner_decls_) {
+			ret += FormatIndent(indent) + decl->DebugString(indent+1) + "\n";
+		}
+		ret += FormatIndent(indent) + "}";
+		return ret;
+	}
+private:
+	vector<Decl*> inner_decls_;
+	bool declared_class_;
+};
 
 class Namespace {
 public:
@@ -561,9 +600,11 @@ public:
   		return name_;
   	}
   	void AddNested(Namespace nested) {
+  		// TODO: Throw on duplicate
   		nested_.push_back(nested);
   	}
   	void AddDecl(Decl* decl) {
+  		// TODO: Throw on duplicate
   		decls_.push_back(decl);
   	}
   	string GetName()const {
@@ -658,9 +699,7 @@ bool PeekAndConsumeUtil(vector<Token>& tokens,
 	return true;
 }
 
-// Throws if none fouond
-string ConsumeOneOfOrError(vector<Token>& tokens,
-					set<string> look_for) throws() {
+bool PeekForAnyUtil(vector<Token>& tokens, set<string> look_for) {
 	if(tokens.len() < 1) {
 		throw Status{.message="No tokens to consume"};
 	}
@@ -672,7 +711,14 @@ string ConsumeOneOfOrError(vector<Token>& tokens,
 			break;
 		}
 	}
-	if(!found) {
+	return found;
+}
+
+// Throws if none fouond
+Token ConsumeOneOfOrError(vector<Token>& tokens,
+					set<string> look_for) throws() {
+
+	if(!PeekForAnyUtil(tokens, look_for)) {
 		string message = "Expected one of: ";
 		for(string s : look_for) {
 			message += s + " ";
@@ -680,7 +726,7 @@ string ConsumeOneOfOrError(vector<Token>& tokens,
 		throw Status{.message = message};
 	}
 
-	tokens.pop_front(1);
+	Token next = tokens.pop_front(1);
 	return next;
 }
 
@@ -695,6 +741,8 @@ void ConsumeOrError(vector<Token>& tokens,
 	}
 }
 
+Expr* ParseExpr(Context& context,
+				vector<Token>& tokens);
 
 // Throws on failure
 Identifier ParseIdentifier(vector<Token>& tokens) throws(Status) {
@@ -711,6 +759,11 @@ Identifier ParseIdentifier(vector<Token>& tokens) throws(Status) {
 	return ret;
 }
 
+Identifier ConsumeIdentifierFromSingleToken(vector<Token>& tokens) throws(Status) {
+	Token name_tok = tokens.pop_front();
+	IsValidID(name_tok.content, name_tok.loc) throws();
+	return {.global = false, .parts = {name_tok.content}, .loc = name_tok.loc};
+}
 
 Decl* GetDeclByIdentifier(Context& context, Identifier id) throws(Status) {
 	if(id.global) {
@@ -731,55 +784,60 @@ Decl* GetDeclByIdentifier(Context& context, Identifier id) throws(Status) {
 	}
 
 	// TODO: namespaces above
-
+fprintf(stderr, "Couldn't find identifier %s\n", id.DebugString().c_str());
 	throw Status{.message = string("Couldn't find identifier ") + id.DebugString()};
 }
 
 // Returns nullptr on failure when throw_on_fail = false
 // Only consumes tokens on success
 Type* ParseType(Context& context, vector<Token>& tokens, bool throw_on_fail=true) throws(Status) {
-	const vector<Token> prev_tokens = tokens;
-	auto prev_tokens_guard = MakeLambdaGuard(
-		[&tokens, prev_tokens]() {
-			tokens = prev_tokens;
-		}
-	);
-
-	Token next_token = tokens[0];
-	if(next_token.content == "void") {
-		tokens.pop_front();
-		prev_tokens_guard.deactivate();
-		return new VoidType;
-	} else if(next_token.content == "int") {
-		tokens.pop_front();
-		prev_tokens_guard.deactivate();
-		return new IntType;
-	}
-	Decl* decl = nullptr;
 	try {
-		Identifier id = ParseIdentifier(tokens) throws();
-		decl = GetDeclByIdentifier(context, id) throws();
-	} catch(Status status) {
+		const vector<Token> prev_tokens = tokens;
+		auto prev_tokens_guard = MakeLambdaGuard(
+			[&tokens, prev_tokens]() {
+				tokens = prev_tokens;
+			}
+		);
+
+		Token next_token = tokens[0];
+		if(next_token.content == "void") {
+			tokens.pop_front();
+			prev_tokens_guard.deactivate();
+			return new VoidType;
+		} else if(next_token.content == "int") {
+			tokens.pop_front();
+			prev_tokens_guard.deactivate();
+			return new IntType;
+		}
+		Decl* decl = nullptr;
+		try {
+			Identifier id = ParseIdentifier(tokens) throws();
+			decl = GetDeclByIdentifier(context, id) throws();
+		} catch(Status status) {
+			throw status;
+		}
+
+		if(auto param = AsA<TemplateParam*>(decl)) {
+			if(param->GetKind() != TemplateParamKind_Type) {
+				throw Status{.message = "Only typenames template parameters can be used as types"};
+			}
+
+			prev_tokens_guard.deactivate();
+			return param;
+		}
+		if(decl) {
+			throw Status{.message = string("Decl can't be interpreted as type: ") + decl->DebugString(0)};
+		}
+
+		throw Status{.message = string("Don't know how to translate token to type: ") + next_token.content};
+	} catch (Status status) {
+
 		if(throw_on_fail) {
 			throw status;
 		} else {
 			return nullptr;
 		}
 	}
-
-	if(auto param = AsA<TemplateParam*>(decl)) {
-		if(param->GetKind() != TemplateParamKind_Type) {
-			throw Status{.message = "Only typenames template parameters can be used as types"};
-		}
-
-		prev_tokens_guard.deactivate();
-		return param;
-	}
-
-	if(throw_on_fail) {
-		throw Status{.message = string("Don't know how to translate token to type: ") + next_token.content};
-	}
-	return nullptr;
 }
 
 
@@ -802,7 +860,8 @@ vector<TemplateParam*> ParseTemplateParams(Context& context,
 			ConsumeOrError(tokens, {","}) throws();
 		}
 
-		string kind_word = ConsumeOneOfOrError(tokens, {"int", "typename"}) throws();
+		Token kind_tok = ConsumeOneOfOrError(tokens, {"int", "typename"}) throws();
+		string kind_word = kind_tok.content;
 
 		TemplateParamKind kind = TemplateParamKind_Null;
 
@@ -862,21 +921,61 @@ vector<TemplateArg> ParseTemplateArgs(Context& context,
 }
 
 
+// Throws on error
+// Only consumes tokens on success
+// param_mode disallows ctor, brace init
+// Does not consume the ;
 VarDecl* ParseVarDecl(Context& context,
-					  vector<Token>& tokens) throws(Status) {
-	Type* type = ParseType(context, tokens);
-	Token name_tok = tokens.pop_front();
-	
-	if(PeekAndConsumeUtil(tokens, {"="})) {
-		throw Status{.message="TODO: initializer"};
+				vector<Token>& tokens,
+				Identifier id,
+				vector<TemplateParam*> template_params,
+				Type* type,
+				bool static_specified,
+				bool param_mode=false) throws() {
+	assert(id.parts.len() > 0);
+	if(id.global || id.parts.len() > 1) {
+		throw Status{.message="VarDecl can't have qualified name"};
 	}
 
-	VarDecl* decl = new VarDecl(name_tok.content, name_tok.loc, type);
+	string name = id.parts[0];
+
+	vector<Token> prev_tokens = tokens;
+
+	auto tokens_guard = MakeLambdaGuard(
+		[prev_tokens, &tokens]() {
+			tokens = prev_tokens;
+		}
+	);
+	
+	Expr* init = nullptr;
+
+	if(PeekAndConsumeUtil(tokens, {"="})) {
+fprintf(stderr, "ParseExpr in var init\n");
+		init = ParseExpr(context, tokens);
+	}
+
+	// param_mode
+
+	VarDecl* decl = new VarDecl(name, id.loc, type, init);
 	
 	context.AddDecl(decl);
-
+	tokens_guard.deactivate();
 	return decl;
 }
+
+VarDecl* ParseParamDecl(Context& context,
+					  vector<Token>& tokens) throws(Status) {
+	Type* type = ParseType(context, tokens) throws();
+
+	Identifier id = ConsumeIdentifierFromSingleToken(tokens) throws();
+
+	return ParseVarDecl(context, tokens, id, 
+						/*template_params=*/{}, 
+						type,
+						/*static_specified=*/false, 
+						/*param_mode=*/true);
+}
+
 
 // Only consumes tokens if successful
 // Returns nullptr if an identifier couldn't be parsed
@@ -896,13 +995,18 @@ DeclRef* ParseDeclRef(Context& context,
 	// Decl for identifier
 	Identifier id;
 	try {
+fprintf(stderr, "ParseDeclRef ParseIdentifier\n");
 		id = ParseIdentifier(tokens) throws();
+fprintf(stderr, "ParseDeclRef ParseIdentifier id = %s\n",
+			id.DebugString().c_str());
 	} catch(Status status) {
 		return nullptr;
 	}
 
+fprintf(stderr, "ParseDeclRef ParseIdentifier A\n");
 	Decl* decl = GetDeclByIdentifier(context, id) throws();
 
+fprintf(stderr, "ParseDeclRef ParseIdentifier B\n");
 	vector<TemplateArg> template_args;
 	auto templated_decl = AsA<TemplatedDecl*>(decl);
 	if(templated_decl) {
@@ -912,7 +1016,10 @@ fprintf(stderr, "-- Parsing template args for %s, n=%li, next is %s\n",
 		template_args = ParseTemplateArgs(context, tokens, template_params);
 	}
 
+fprintf(stderr, "ParseDeclRef ParseIdentifier C\n");
 	DeclRef* ret = new DeclRef(decl, /*template_params=*/template_args, loc);
+fprintf(stderr, "Parsed DeclRef ret %s\n", 
+	ret->DebugString(0).c_str());
 
 	tokens_guard.deactivate();
 	return ret;
@@ -959,9 +1066,6 @@ vector<Expr*> UnpackCommaExprs(Expr* commas) {
 	}
 	return ret;
 }
-
-Expr* ParseExpr(Context& context,
-				vector<Token>& tokens);
 
 // Returns nullptr on non-function form
 // Only consumes tokens on success
@@ -1072,6 +1176,10 @@ fprintf(stderr, "Parent inner %s\n", inner->DebugString(0).c_str());
 	if(decl_ref != nullptr) {
 		assert(!leaf_parsed);
 		leaf_parsed = decl_ref;
+		
+		fprintf(stderr, "ParseExpr next %s decl_ref %s\n", 
+			tokens[0].content.c_str(),
+			decl_ref->DebugString(0).c_str());
 	}
 
 	// Function call
@@ -1123,28 +1231,57 @@ Stmt* ParseStmt(Context& context,
 	Token next_token = tokens[0];
 	LocationRef loc = next_token.loc;
 
-	Stmt* ret = nullptr;
-
 	if(PeekAndConsumeUtil(tokens, {"return"})) {
-		ret = new ReturnStmt(ParseExpr(context, tokens), loc);
-	} else if(ret == nullptr) {
-		ret = ParseExpr(context, tokens) throws ();
+fprintf(stderr, ">> ParseStmt ret\n");
+		Stmt* ret = new ReturnStmt(ParseExpr(context, tokens), loc);
+fprintf(stderr, ">> ParseStmt ret %s\n", ret->DebugString(0).c_str());
+		ConsumeOrError(tokens, {";"}) throws ();
+		return ret;
 	}
 
-	ConsumeOrError(tokens, {";"}) throws ();
+	Type* type = ParseType(context, tokens, /*throw_on_failure=*/false) throws();
 
+	if(type != nullptr) {
+		Identifier id = ConsumeIdentifierFromSingleToken(tokens) throws();
+		Stmt* ret = ParseVarDecl(context, tokens, id, 
+						/*template_params=*/{}, 
+						type,
+						/*static_specified=*/false, 
+						/*param_mode=*/true) throws();
+		ConsumeOrError(tokens, {";"}) throws ();
+		return ret;
+	}
+
+	Stmt* ret = ParseExpr(context, tokens) throws ();
+	ConsumeOrError(tokens, {";"}) throws ();
 	return ret;
 }
 
 // Throws on failure
 // Starts from after the "return_type name"
+// Only consumes tokens on success
 FuncDecl* ParseFuncDecl(Context& context,
 						vector<Token>& tokens,
-						string name,
+						Identifier id,
 						vector<TemplateParam*> template_params,
 						Type* return_type,
-						LocationRef loc) throws(Status) {
-fprintf(stderr, "---- ParseFuncDecl %s\n", name.c_str());
+						bool static_specified) throws(Status) {
+	vector<Token> prev_tokens = tokens;
+
+	auto tokens_guard = MakeLambdaGuard(
+		[prev_tokens, &tokens]() {
+			tokens = prev_tokens;
+		}
+	);
+
+	assert(id.parts.len() > 0);
+fprintf(stderr, ">> ParseFuncDecl %s\n", id.DebugString().c_str());
+	if(id.global || id.parts.len() > 1) {
+		throw Status{.message="FuncDecl qualified names not yet supported"};
+	}
+
+	string name = id.parts[0];
+	LocationRef loc = id.loc;
 
 	auto PeekAndConsume = [&tokens](vector<string> look_for) {
 		return PeekAndConsumeUtil(tokens, look_for);
@@ -1169,7 +1306,7 @@ fprintf(stderr, "---- ParseFuncDecl %s\n", name.c_str());
 			ConsumeOrError(tokens, {","}) throws();
 		}
 
-		parameters.push_back(ParseVarDecl(context, tokens));
+		parameters.push_back(ParseParamDecl(context, tokens));
 	}
 
 	auto funcdecl = new FuncDecl(name, /*template_params=*/template_params, 
@@ -1183,6 +1320,8 @@ fprintf(stderr, "---- ParseFuncDecl %s\n", name.c_str());
 
 	ConsumeOrError(tokens, {"{"});
 
+fprintf(stderr, ">> ParseFuncDecl body %s\n", id.DebugString().c_str());
+
 	vector<Stmt*> body;
 
 	while(!PeekAndConsume({"}"})) {
@@ -1190,7 +1329,114 @@ fprintf(stderr, "---- ParseFuncDecl %s\n", name.c_str());
 	}
 
 	funcdecl->SetBody(body);
+	tokens_guard.deactivate();
+
+fprintf(stderr, ">> ParseFuncDecl finished %s\n", id.DebugString().c_str());
 	return funcdecl;
+}
+
+StructDecl* ParseStructDecl(Context& context,
+							vector<Token>& tokens,
+							vector<TemplateParam*> template_params) throws();
+
+// Consumes the ;
+Decl* ParseDecl(Context& context, vector<Token>& tokens) {
+	auto PeekAndConsume = [&tokens](vector<string> look_for) {
+		return PeekAndConsumeUtil(tokens, look_for);
+	};
+
+	vector<TemplateParam*> template_params;
+
+	auto template_context_pop_guard = MakeLambdaGuard(
+		[&context]() {
+			context.PopFrame();
+	});
+
+	if(PeekAndConsume({"template"})) {
+		context.PushFrame();
+		template_params = ParseTemplateParams(context, tokens);
+	} else {
+		template_context_pop_guard.deactivate();
+	}
+
+	if(PeekAndConsume({"typedef"})) {
+		throw Status{.message="TODO: typedef"};
+	}
+	if(PeekAndConsume({"using"})) {
+		throw Status{.message="TODO: using"};
+	}
+	if(PeekForAnyUtil(tokens, {"class", "struct"})) {
+		return ParseStructDecl(context, tokens, template_params);
+	}
+
+	bool static_specified = false;
+	if(PeekAndConsumeUtil(tokens, {"static"})) {
+		static_specified = true;
+	}
+
+	// Parse as type
+	Type* type = ParseType(context, tokens) throws();
+
+fprintf(stderr, "-- At AAA type=%s, next=%s\n",
+		type->DebugString(0).c_str(),
+		tokens[0].content.c_str());
+
+	Identifier id = ParseIdentifier(tokens) throws();
+
+fprintf(stderr, "-- At BBB id=%s, next=%s\n",
+		id.DebugString().c_str(), tokens[0].content.c_str());
+
+	// Where ambiguous, prefer to interpret as function prototype
+	try {
+		// Function proto is default, as it's the most complicated to parse
+		return ParseFuncDecl(context, tokens, id, template_params, type, static_specified);
+	} catch (Status status) {
+	}
+
+	Decl* ret = ParseVarDecl(context, tokens, id, template_params, type, static_specified);
+	ConsumeOrError(tokens, {";"});
+	return ret;
+}
+
+// Consumes struct/class token
+StructDecl* ParseStructDecl(Context& context,
+							vector<Token>& tokens,
+							vector<TemplateParam*> template_params) throws() {
+
+	Token keyword_tok = tokens.pop_front();
+	LocationRef loc = keyword_tok.loc;
+	string keyword = keyword_tok.content;
+
+	bool declared_class = false;
+
+	if(keyword == "class") {
+		declared_class = true;
+	} else if (keyword == "struct") {
+		declared_class = false;
+	} else {
+		throw Status{.message=string("INTERNAL: ParseStructDecl called with first token ") + keyword};
+	}
+
+	Token name_tok = tokens.pop_front();
+
+fprintf(stderr, ">> ParseStructDecl name %s\n", name_tok.content.c_str());
+
+	vector<Decl*> inner_decls;
+
+	ConsumeOrError(tokens, {"{"});
+
+	while(!PeekAndConsumeUtil(tokens, {"}"})) {
+		inner_decls.push_back(ParseDecl(context, tokens));
+	}
+
+	// TODO: inline decls
+	ConsumeOrError(tokens, {";"});
+
+	return new StructDecl(name_tok.content,
+						   declared_class,
+						   template_params,
+						   inner_decls,
+						   loc);
 }
 
 void ParseNamespaceContents(Context& context,
@@ -1224,57 +1470,10 @@ void ParseNamespaceContents(Context& context,
 			result.AddNested(nested);
 		}
 
-		Decl* decl = nullptr;
-		{
-			vector<TemplateParam*> template_params;
+		Decl* decl = ParseDecl(context, tokens);
 
-			auto template_context_pop_guard = MakeLambdaGuard(
-				[&context]() {
-					context.PopFrame();
-			});
-
-			if(PeekAndConsume({"template"})) {
-				context.PushFrame();
-				template_params = ParseTemplateParams(context, tokens);
-			} else {
-				template_context_pop_guard.deactivate();
-			}
-
-			if(PeekAndConsume({"typedef"})) {
-				throw Status{.message="TODO: typedef"};
-			}
-			if(PeekAndConsume({"using"})) {
-				throw Status{.message="TODO: using"};
-			}
-			if(PeekAndConsume({"class"})) {
-				throw Status{.message="TODO: class"};
-			}
-			if(PeekAndConsume({"struct"})) {
-				throw Status{.message="TODO: struct"};
-			}
-
-			bool static_specified = false;
-			if(PeekAndConsume({"static"})) {
-				static_specified = true;
-			}
-
-			// Parse as type
-			Type* type = ParseType(context, tokens);
-
-			Token name_tok = tokens.pop_front();
-
-			string next = tokens[0].content;
-
-			if(next == "=" || next == ";" || next == "{") {
-				throw Status{.message="TODO: decl"};
-			}
-
-			// Function proto is default, as it's the most complicated to parse
-			decl = ParseFuncDecl(context, tokens, name_tok.content, template_params, type, name_tok.loc);
-		}
 		result.AddDecl(decl) throws();
-fprintf(stderr, ">> Adding funcdecl %s\n", decl->GetName().c_str());
-		context.AddDecl(decl);
+		context.AddDecl(decl) throws();
 	}
 }
 
