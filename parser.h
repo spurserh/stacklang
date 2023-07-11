@@ -220,20 +220,6 @@ private:
 };
 
 
-class DeclRefType : public Type {
-public:
-	DeclRefType(Decl* ref) : ref_(ref) {
-	}
-	string DebugString(int64 indent)const override {
-		return ref_->DebugString(indent);
-	}
-	Decl* GetDecl()const {
-		return ref_;
-	}
-private:
-	Decl* ref_;
-};
-
 class Expr : public Stmt {
 public:
 	Expr(LocationRef loc) : Stmt(loc) { }
@@ -256,24 +242,6 @@ struct TemplateArg {
 		return "(null)";
 	}
 };
-
-class Literal : public Expr {
-public:
-	Literal(Value* value, LocationRef loc) : 
-		Expr(loc), value_(value) {
-
-	}
-  	string DebugString(int64 indent)const override {
-  		return value_->DebugString();
-  	}
-	Value* GetValue()const {
-		return value_;
-	}
-	vector<Expr*> GetOperands()const override { return {}; }
-private:
-	Value* value_;
-};
-
 
 class DeclRef : public Expr {
 public:
@@ -305,6 +273,39 @@ private:
 	vector<TemplateArg> template_args_;
 };
 
+
+class DeclRefType : public Type {
+public:
+	DeclRefType(DeclRef* ref) : ref_(ref) {
+	}
+	string DebugString(int64 indent)const override {
+		return ref_->DebugString(indent);
+	}
+	DeclRef* GetDeclRef()const {
+		return ref_;
+	}
+private:
+	DeclRef* ref_;
+};
+
+class Literal : public Expr {
+public:
+	Literal(Value* value, LocationRef loc) : 
+		Expr(loc), value_(value) {
+
+	}
+  	string DebugString(int64 indent)const override {
+  		return value_->DebugString();
+  	}
+	Value* GetValue()const {
+		return value_;
+	}
+	vector<Expr*> GetOperands()const override { return {}; }
+private:
+	Value* value_;
+};
+
+
 class MemberExpr : public Expr {
 public:
 	MemberExpr(Expr* base, string member_name, bool pointer, LocationRef loc)
@@ -321,6 +322,10 @@ public:
 		ret += string(pointer_ ? " -> " : " . ");
 		ret += member_name_;
 		return ret;
+	}
+
+	Expr* GetBase()const {
+		return base_;
 	}
 
 private:
@@ -371,6 +376,7 @@ private:
 enum CastType {
 	CastType_Null=0,
 	CastType_CStyle,
+	CastType_CPPStyle,
 	CastType_Static,
 	CastType_Dynamic,
 	CastType_Const,
@@ -524,6 +530,9 @@ public:
     }
     Type* GetType()const {
     	return type_;
+    }
+    Expr* GetInit()const {
+    	return init_;
     }
 private:
 	Type* type_ = nullptr;
@@ -769,7 +778,7 @@ Token ConsumeOneOfOrError(vector<Token>& tokens,
 void ConsumeOrError(vector<Token>& tokens,
 					vector<string> look_for) throws(Status) {
 	if(!PeekAndConsumeUtil(tokens, look_for)) {
-		string message = "Expected token(s): ";
+		string message = string("Got token ") + tokens[0].content + " Expected token(s): ";
 		for(string s : look_for) {
 			message = message + s;
 		}
@@ -779,7 +788,8 @@ void ConsumeOrError(vector<Token>& tokens,
 
 Expr* ParseExpr(Context& context,
 				vector<Token>& tokens);
-
+DeclRef* ParseDeclRef(Context& context,
+				vector<Token>& tokens) throws(Status);
 // Throws on failure
 Identifier ParseIdentifier(vector<Token>& tokens) throws(Status) {
 	Identifier ret;
@@ -845,15 +855,17 @@ Type* ParseType(Context& context, vector<Token>& tokens, bool throw_on_fail=true
 			prev_tokens_guard.deactivate();
 			return new IntType;
 		}
-		Decl* decl = nullptr;
+		DeclRef* decl = nullptr;
 		try {
-			Identifier id = ParseIdentifier(tokens) throws();
-			decl = GetDeclByIdentifier(context, id) throws();
+//			Identifier id = ParseIdentifier(tokens) throws();
+//			decl = GetDeclByIdentifier(context, id) throws();
+			decl = ParseDeclRef(context, tokens) throws ();
+fprintf(stderr, "In ParseType: decl %s\n", decl->DebugString(0).c_str());
 		} catch(Status status) {
 			throw status;
 		}
 
-		if(auto param = AsA<TemplateParam*>(decl)) {
+		if(auto param = AsA<TemplateParam*>(decl->GetRef())) {
 			if(param->GetKind() != TemplateParamKind_Type) {
 				throw Status{.message = "Only typenames template parameters can be used as types"};
 			}
@@ -861,10 +873,14 @@ Type* ParseType(Context& context, vector<Token>& tokens, bool throw_on_fail=true
 			prev_tokens_guard.deactivate();
 			return param;
 		}
-		if(auto type = AsA<Type*>(decl)) {
+		if(auto type = AsA<Type*>(decl->GetRef())) {
 			prev_tokens_guard.deactivate();
 			return type;
 		}
+		if(auto type = AsA<TemplatedDecl*>(decl->GetRef())) {
+fprintf(stderr, "!!! TODO: TemplatedDecl\n");
+			exit(1);
+		}		
 
 		if(decl) {
 			string message = string("Decl can't be interpreted as type: ") + decl->DebugString(0);
@@ -1007,9 +1023,16 @@ VarDecl* ParseVarDecl(Context& context,
 
 VarDecl* ParseParamDecl(Context& context,
 					  vector<Token>& tokens) throws(Status) {
+fprintf(stderr, "ParseParamDecl next %s\n", tokens[0].content.c_str());
+
 	Type* type = ParseType(context, tokens) throws();
 
+fprintf(stderr, "ParseParamDecl type %s\n", type->DebugString(0).c_str());
+
 	Identifier id = ConsumeIdentifierFromSingleToken(tokens) throws();
+
+fprintf(stderr, "ParseParamDecl id %s\n", id.DebugString().c_str());
+
 
 	return ParseVarDecl(context, tokens, id, 
 						/*template_params=*/{}, 
@@ -1024,6 +1047,8 @@ VarDecl* ParseParamDecl(Context& context,
 // Throws if it was an identifier but it couldn't be resolved, or missing template args
 DeclRef* ParseDeclRef(Context& context,
 				vector<Token>& tokens) throws(Status) {
+fprintf(stderr, "ParseDeclRef %s\n", tokens[0].content.c_str());
+
 	vector<Token> prev_tokens = tokens;
 
 	auto tokens_guard = MakeLambdaGuard(
@@ -1401,6 +1426,7 @@ Decl* ParseDecl(Context& context, vector<Token>& tokens) {
 		// Function proto is default, as it's the most complicated to parse
 		return ParseFuncDecl(context, tokens, id, template_params, type, static_specified);
 	} catch (Status status) {
+		fprintf(stderr, "ParseDecl:ParseFuncDecl status %s\n", status.message.c_str());
 	}
 
 	Decl* ret = ParseVarDecl(context, tokens, id, template_params, type, static_specified);

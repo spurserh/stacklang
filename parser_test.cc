@@ -684,12 +684,71 @@ fprintf(stderr, "%s\n", top->DebugString(0).c_str());
 	auto top_bop = compiler::AsA<compiler::BinaryOp*>(top);
 	ASSERT(top_bop != nullptr);
 	EXPECT_EQ(top_bop->GetOp(), "+");
-
 }
+
+
+DECLARE_TEST(TemplateStructParam)
+{
+	const char* src = R"(
+template<typename T>
+struct Foo {
+	T a = 3;
+	T b = 1 + a / 2;
+};
+int top(Foo<int> v) {
+	return v.a;
+}
+	)";
+
+	compiler::Expr* top = TestSingleFunctionSingleReturn(src);
+fprintf(stderr, "%s\n", top->DebugString(0).c_str());
+	EXPECT_EQ(CountNodes(top), 2);
+
+	auto top_member = compiler::AsA<compiler::MemberExpr*>(top);
+	ASSERT(top_member != nullptr);
+
+	auto base_ref = compiler::AsA<compiler::DeclRef*>(top_member->GetBase());
+	ASSERT(base_ref != nullptr);
+
+	auto param = compiler::AsA<compiler::VarDecl*>(base_ref->GetRef());
+	ASSERT(param != nullptr);
+
+	fprintf(stderr, "Param %s type %s\n", 
+		param->GetName().c_str(),
+		param->GetType()->DebugString(0).c_str());
+
+	// Test instantiation
+	EXPECT_NOT_NULL(compiler::AsA<compiler::IntType*>(param->GetType()));
+}
+
+DECLARE_TEST(CppStyleCast)
+{
+	const char* src = R"(
+
+int top(int x) {
+	return int(x+1);
+}
+	)";
+
+	compiler::Expr* top = TestSingleFunctionSingleReturn(src);
+	EXPECT_EQ(CountNodes(top), 5);
+
+	fprintf(stderr, "%s\n", top->DebugString(0).c_str());
+
+	auto top_cast = compiler::AsA<compiler::CastExpr*>(top);
+	ASSERT(top_cast != nullptr);
+	EXPECT_EQ(top_cast->GetCastType(), compiler::CastType_CStyle);
+}
+
+
+
+// Typedef
+// CPP style case with user defined type
+
 
 // Foo f() as function not decl
 
-// Template struct
+// Template instantiation
 
 
 }  // namespace
