@@ -506,11 +506,22 @@ private:
 	Expr* value_;
 };
 
+enum VarDeclInitType {
+	VarDeclInitType_None=0,
+	VarDeclInitType_Equals,
+	VarDeclInitType_Ctor,
+	VarDeclInitType_InitList
+};
 
 class VarDecl : public Decl {
 public:
-	VarDecl(string name, LocationRef loc, Type* type, Expr* init) 
-	  : Decl(name, loc), type_(type), init_(init) {
+	VarDecl(string name, LocationRef loc, Type* type, 
+			VarDeclInitType init_type,
+			vector<Expr*> init_params) 
+	  : Decl(name, loc), type_(type), 
+	  	init_type_(init_type), init_params_(init_params) {
+	 	assert(!(init_type_ == VarDeclInitType_Equals && 
+	 			 init_params.len() != 1));
 	}
 	~VarDecl() override {}
     string DebugString(int64 indent)const override {
@@ -522,8 +533,15 @@ public:
       string ret = string("VarDecl ") + ptr + " (" 
   	  	+ GetName() + " : " + type_->DebugString(indent) + ")";
 
-  	  if(init_ != nullptr) {
-  	  	ret += string(" = ") + init_->DebugString(0);
+  	  if(init_type_ == VarDeclInitType_Equals) {
+  	  	ret += string(" = ") + init_params_[0]->DebugString(0);
+  	  } else if(init_type_ == VarDeclInitType_Ctor) {
+  	  	ret += string("(");
+  	  	for(Expr* param : init_params_) {
+  	  		ret += param->DebugString(0).c_str();
+  	  		ret += " ";
+  	  	}
+  	  	ret += string(")");
   	  }
 
   	  return ret;
@@ -531,12 +549,16 @@ public:
     Type* GetType()const {
     	return type_;
     }
-    Expr* GetInit()const {
-    	return init_;
+    VarDeclInitType GetInitType()const {
+    	return init_type_;
+    }
+    vector<Expr*> GetInitParams()const {
+    	return init_params_;
     }
 private:
 	Type* type_ = nullptr;
-	Expr* init_ = nullptr;
+	VarDeclInitType init_type_ = VarDeclInitType_None;
+	vector<Expr*> init_params_;
 };
 
 class FuncDecl : public TemplatedDecl {
@@ -545,11 +567,13 @@ public:
 			 vector<TemplateParam*> template_params,
 			 Type* return_type,
 			 vector<VarDecl*> parameters,
+			 bool is_prototype,
 			 vector<Stmt*> body,
 			 LocationRef loc) 
 	  : TemplatedDecl(name, template_params, loc),
 	  	return_type_(return_type),
 	  	parameters_(parameters),
+	  	is_prototype_(is_prototype),
 	  	body_(body) {
 	}
 	~FuncDecl() override {}
@@ -583,6 +607,7 @@ public:
 private:
 	Type* return_type_;
 	vector<VarDecl*> parameters_;
+	bool is_prototype_;
 	vector<Stmt*> body_;
 };
 
@@ -688,6 +713,38 @@ public:
 	vector<Expr*> args_;
 };
 
+class CtorCall : public Expr {
+public:
+	CtorCall(Type* type, vector<Expr*> args, LocationRef loc) 
+		: Expr(loc), type_(type), args_(args) {
+	}
+	string DebugString(int64 indent) const override {
+		string ret = string("ctor(") + type_->DebugString(indent) + ": ";
+		bool first = true;
+		for(Expr* arg : args_) {
+			if(!first) {
+				ret += ",, ";
+			}
+			ret += arg->DebugString(indent);
+			first = false;
+		}
+		ret += ")";
+		return ret;
+	}
+	vector<Expr*> GetOperands()const override {
+		return args_;
+	}
+	vector<Expr*> GetArgs()const {
+		return args_;
+	}
+	Type* GetType() const {
+		return type_;
+	}
+ private:
+ 	Type* type_;
+	vector<Expr*> args_;
+};
+
 struct Token {
 	string content;
 	LocationRef loc;
@@ -787,9 +844,15 @@ void ConsumeOrError(vector<Token>& tokens,
 }
 
 Expr* ParseExpr(Context& context,
-				vector<Token>& tokens);
+				vector<Token>& tokens,
+				set<string> disallow_infixes);
 DeclRef* ParseDeclRef(Context& context,
 				vector<Token>& tokens) throws(Status);
+
+vector<Expr*> ParseCommaSeparatedArguments(Context& context,
+											vector<Token>& tokens,
+											string terminator);
+
 // Throws on failure
 Identifier ParseIdentifier(vector<Token>& tokens) throws(Status) {
 	Identifier ret;
@@ -860,29 +923,31 @@ Type* ParseType(Context& context, vector<Token>& tokens, bool throw_on_fail=true
 //			Identifier id = ParseIdentifier(tokens) throws();
 //			decl = GetDeclByIdentifier(context, id) throws();
 			decl = ParseDeclRef(context, tokens) throws ();
-fprintf(stderr, "In ParseType: decl %s\n", decl->DebugString(0).c_str());
+fprintf(stderr, "In ParseType: decl %s\n", decl ? decl->DebugString(0).c_str() : "(null)");
 		} catch(Status status) {
 			throw status;
 		}
 
-		if(auto param = AsA<TemplateParam*>(decl->GetRef())) {
-			if(param->GetKind() != TemplateParamKind_Type) {
-				throw Status{.message = "Only typenames template parameters can be used as types"};
+		if(decl) {
+			if(auto param = AsA<TemplateParam*>(decl->GetRef())) {
+				if(param->GetKind() != TemplateParamKind_Type) {
+					throw Status{.message = "Only typenames template parameters can be used as types"};
+				}
+
+				prev_tokens_guard.deactivate();
+				return param;
+			}
+			if(auto type = AsA<Type*>(decl->GetRef())) {
+				prev_tokens_guard.deactivate();
+				return type;
+			}
+			auto func_decl = AsA<FuncDecl*>(decl->GetRef());
+			auto templated_decl = AsA<TemplatedDecl*>(decl->GetRef());
+			if(templated_decl && !func_decl) {
+	fprintf(stderr, "!!! TODO: TemplatedDecl\n");
+				exit(1);
 			}
 
-			prev_tokens_guard.deactivate();
-			return param;
-		}
-		if(auto type = AsA<Type*>(decl->GetRef())) {
-			prev_tokens_guard.deactivate();
-			return type;
-		}
-		if(auto type = AsA<TemplatedDecl*>(decl->GetRef())) {
-fprintf(stderr, "!!! TODO: TemplatedDecl\n");
-			exit(1);
-		}		
-
-		if(decl) {
 			string message = string("Decl can't be interpreted as type: ") + decl->DebugString(0);
 fprintf(stderr, "LOG: %s\n", message.c_str());
 			throw Status{.message = message};
@@ -965,8 +1030,13 @@ vector<TemplateArg> ParseTemplateArgs(Context& context,
 		}
 
 		if(param->GetKind() == TemplateParamKind_Type) {
+fprintf(stderr, "---- Parse type TemplateArg ---\n");
 			ret.push_back(TemplateArg{.type = ParseType(context, tokens)}) throws();
+		} else if(param->GetKind() == TemplateParamKind_Int) {
+fprintf(stderr, "---- Parse int TemplateArg ---\n");
+			ret.push_back(TemplateArg{.int_value = ParseExpr(context, tokens, /*disallow_infix=*/{",", ">"})}) throws();
 		} else {
+			// TODO: Parse args
 			// TODO: Unpack commas becomes annoying here..
 			throw Status{.message="Don't know how to handle template param kind"};
 		}
@@ -982,7 +1052,7 @@ vector<TemplateArg> ParseTemplateArgs(Context& context,
 
 // Throws on error
 // Only consumes tokens on success
-// param_mode disallows ctor, brace init
+// param_mode disallows ctor, init list
 // Does not consume the ;
 VarDecl* ParseVarDecl(Context& context,
 				vector<Token>& tokens,
@@ -999,22 +1069,28 @@ VarDecl* ParseVarDecl(Context& context,
 	string name = id.parts[0];
 
 	vector<Token> prev_tokens = tokens;
-
 	auto tokens_guard = MakeLambdaGuard(
 		[prev_tokens, &tokens]() {
 			tokens = prev_tokens;
 		}
 	);
 	
-	Expr* init = nullptr;
+	VarDeclInitType init_type = VarDeclInitType_None;
+	vector<Expr*> init_params;
 
 	if(PeekAndConsumeUtil(tokens, {"="})) {
-		init = ParseExpr(context, tokens);
+		init_type = VarDeclInitType_Equals;
+		init_params.push_back(ParseExpr(context, tokens, /*disallow_infix=*/{","}));
+	} else if(!param_mode && PeekAndConsumeUtil(tokens, {"("})) {
+		init_type = VarDeclInitType_Ctor;
+		init_params = ParseCommaSeparatedArguments(context, tokens, /*terminator*/{")"});
+	} else if(!param_mode && PeekAndConsumeUtil(tokens, {"{"})) {
+		init_type = VarDeclInitType_InitList;
+		init_params = ParseCommaSeparatedArguments(context, tokens, /*terminator*/{"}"});
 	}
 
-	// param_mode
-
-	VarDecl* decl = new VarDecl(name, id.loc, type, init);
+	VarDecl* decl = new VarDecl(name, id.loc, type, 
+								init_type, init_params);
 	
 	context.AddDecl(decl);
 	tokens_guard.deactivate();
@@ -1108,20 +1184,19 @@ BinaryOp* IsCommaOp(Expr* expr) {
 	return (bop && bop->GetOp() == ",") ? bop : nullptr;
 }
 
-vector<Expr*> UnpackCommaExprs(Expr* commas) {
-	vector<Expr*> ret;
-	while(true) {
-		BinaryOp* comma_op = IsCommaOp(commas);
-		if(comma_op) {
-			assert(!IsCommaOp(comma_op->GetLeft()));
-			ret.push_back(comma_op->GetLeft());
-			commas = comma_op->GetRight();
-		} else {
-			ret.push_back(commas);
-			break;
-		}
+// Consumes terminator, such as ")"
+vector<Expr*> ParseCommaSeparatedArguments(Context& context,
+											vector<Token>& tokens,
+											string terminator) {
+	vector<Expr*> args;
+	if(PeekAndConsumeUtil(tokens, {terminator})) {
+		return args;
 	}
-	return ret;
+	do {
+		args.push_back(ParseExpr(context, tokens, /*disallow_infix=*/{","}));
+	} while(PeekAndConsumeUtil(tokens, {","}));
+	ConsumeOrError(tokens, {terminator});
+	return args;
 }
 
 // Returns nullptr on non-function form
@@ -1159,20 +1234,13 @@ FuncCall* ParseFuncCall(Context& context,
 	}
 
 	// We can throw errors after this, as it must be a call
-
-
-	// Comma operator is top priority
-	Expr* args_expr = ParseExpr(context, tokens);
-
-	vector<Expr*> args = UnpackCommaExprs(args_expr);
+	vector<Expr*> args = ParseCommaSeparatedArguments(context, tokens, /*terminator=*/")");
 
 	if(args.len() != callee->GetParameters().len()) {
 		throw Status{.message = string("Function ") + callee->GetName() 
 		+ " expects " + std::to_string(callee->GetParameters().len()).c_str()
 		+ " parameters"};
 	}
-
-	ConsumeOrError(tokens, {")"});
 
 	FuncCall* funccall = new FuncCall(decl_ref, args, loc);
 
@@ -1182,30 +1250,15 @@ FuncCall* ParseFuncCall(Context& context,
 }
 
 Expr* ParseExpr(Context& context,
-				vector<Token>& tokens) {
-	Expr* leaf_parsed = nullptr;
+				vector<Token>& tokens,
+				set<string> disallow_infixes) {
+	fprintf(stderr, "ParseExpr %s\n", tokens[0].content.c_str());
 
-	if(tokens[0].content == "(") {
-		LocationRef paren_loc = tokens[0].loc;
-		tokens.pop_front();
-
-		// C style cast
-		//DeclRef* decl_ref = ParseDeclRef(context, tokens);
-		Type* cast_to = ParseType(context, tokens, /*throw_on_failure=*/false);
-
-		if(cast_to != nullptr) {
-			ConsumeOrError(tokens, {")"});
-			Expr* sub_expr = ParseExpr(context, tokens);
-			Expr* cast_expr = new CastExpr(CastType_CStyle, cast_to, sub_expr, paren_loc);
-			Expr* ret = AdjustUnaryPrecedence(AsA<UnaryOp*>(cast_expr));
-			return ret;
-		}
-
-		// Regular parenthetical
-		Expr* inner = new ParenExpr(ParseExpr(context, tokens), paren_loc);
-		ConsumeOrError(tokens, {")"});
-		leaf_parsed = inner;
+	LocationRef loc;
+	if(tokens.len()) {
+		loc = tokens[0].loc;
 	}
+	Expr* leaf_parsed = nullptr;
 
 	// Integer literal
 	try{
@@ -1217,15 +1270,61 @@ Expr* ParseExpr(Context& context,
 	} catch(std::out_of_range invalid) {
 	}
 
+	// C style cast or parenthesis
+	if(!leaf_parsed && tokens[0].content == "(") {
+		LocationRef paren_loc = tokens[0].loc;
+		tokens.pop_front();
+
+		// C style cast
+		//DeclRef* decl_ref = ParseDeclRef(context, tokens);
+		Type* cast_to = ParseType(context, tokens, /*throw_on_failure=*/false);
+
+		if(cast_to != nullptr) {
+			ConsumeOrError(tokens, {")"});
+			Expr* sub_expr = ParseExpr(context, tokens, disallow_infixes);
+			Expr* cast_expr = new CastExpr(CastType_CStyle, cast_to, sub_expr, paren_loc);
+			Expr* ret = AdjustUnaryPrecedence(AsA<UnaryOp*>(cast_expr));
+			return ret;
+		}
+
+		// Regular parenthetical
+		Expr* inner = new ParenExpr(ParseExpr(context, tokens, disallow_infixes), paren_loc);
+		ConsumeOrError(tokens, {")"});
+		leaf_parsed = inner;
+	}
+
+
+	// Ctor / CPP style cast
+	Type* ctor_of_type = ParseType(context, tokens, /*throw_on_fail=*/false);
+fprintf(stderr, "-- ctor_of_type %p\n", ctor_of_type);
+	if(!leaf_parsed && ctor_of_type) {
+		ConsumeOrError(tokens, {"("});
+		auto ctor_of_struct = AsA<StructDecl*>(ctor_of_type);
+		if(ctor_of_struct) {
+			fprintf(stderr, "!! TODO: Ctor call on struct check param count\n");
+		}
+		// TODO: Typedef
+		fprintf(stderr, "ParseExpr ctor_of_type %s\n", 
+			ctor_of_type->DebugString(0).c_str());
+		vector<Expr*> args = ParseCommaSeparatedArguments(context, tokens, /*terminator=*/")");
+		leaf_parsed = new CtorCall(ctor_of_type, args, loc);
+	}
+
+
 	// Decl for identifier
-	DeclRef* decl_ref = ParseDeclRef(context, tokens);
+	DeclRef* decl_ref = nullptr;
+	if(!leaf_parsed) {
+		decl_ref = ParseDeclRef(context, tokens);
+	}
 	if(decl_ref != nullptr) {
+fprintf(stderr, "-- decl_ref %s\n", decl_ref->GetRef()->DebugString(0).c_str());
 		assert(!leaf_parsed);
 		leaf_parsed = decl_ref;
 	}
 
 	// Function call
-	if(decl_ref) {
+	if(decl_ref && compiler::AsA<FuncDecl*>(decl_ref->GetRef())) {
+fprintf(stderr, "-- Trying ParseFuncCall next %s\n", tokens[0].content.c_str());
 		FuncCall* call = ParseFuncCall(context, tokens, decl_ref);
 		if(call != nullptr) {
 			leaf_parsed = call;
@@ -1237,7 +1336,7 @@ Expr* ParseExpr(Context& context,
 		Token uop_tok = tokens[0];
 		tokens.pop_front();
 
-		Expr* sub_expr = ParseExpr(context, tokens);
+		Expr* sub_expr = ParseExpr(context, tokens, disallow_infixes);
 		UnaryOp* uop_expr = new UnaryOp(uop_tok.content, /*postfix=*/false, sub_expr, uop_tok.loc);
 		return AdjustUnaryPrecedence(uop_expr);
 	}
@@ -1256,11 +1355,12 @@ Expr* ParseExpr(Context& context,
 		}
 	}
 
-	const set<string> infix_operators = GetAllInfixOperators();
+	set<string> infix_operators = GetAllInfixOperators();
+	infix_operators.remove(disallow_infixes);
 
 	if(leaf_parsed && infix_operators.contains(tokens[0].content)) {
 		Token operator_token = tokens.pop_front();
-		Expr* right_side = ParseExpr(context, tokens);
+		Expr* right_side = ParseExpr(context, tokens, disallow_infixes);
 		return new BinaryOp(operator_token.content,
 							leaf_parsed,
 							right_side,
@@ -1281,25 +1381,41 @@ Stmt* ParseStmt(Context& context,
 	LocationRef loc = next_token.loc;
 
 	if(PeekAndConsumeUtil(tokens, {"return"})) {
-		Stmt* ret = new ReturnStmt(ParseExpr(context, tokens), loc);
+		Stmt* ret = new ReturnStmt(ParseExpr(context, tokens, /*disallow_infix=*/{}), loc);
+fprintf(stderr, "ParseStmt return next %s ret %s\n", 
+	tokens[0].content.c_str(),
+	ret->DebugString(0).c_str());
 		ConsumeOrError(tokens, {";"}) throws ();
 		return ret;
 	}
 
-	Type* type = ParseType(context, tokens, /*throw_on_failure=*/false) throws();
+	// TODO: Static
 
-	if(type != nullptr) {
-		Identifier id = ConsumeIdentifierFromSingleToken(tokens) throws();
-		Stmt* ret = ParseVarDecl(context, tokens, id, 
-						/*template_params=*/{}, 
-						type,
-						/*static_specified=*/false, 
-						/*param_mode=*/true) throws();
-		ConsumeOrError(tokens, {";"}) throws ();
-		return ret;
+	try {
+		vector<Token> prev_tokens = tokens;
+		auto tokens_guard = MakeLambdaGuard(
+			[prev_tokens, &tokens]() {
+				tokens = prev_tokens;
+			}
+		);
+		Type* type = ParseType(context, tokens, /*throw_on_failure=*/false) throws();
+
+		if(type != nullptr) {
+			Identifier id = ConsumeIdentifierFromSingleToken(tokens) throws();
+			Stmt* ret = ParseVarDecl(context, tokens, id, 
+							/*template_params=*/{}, 
+							type,
+							/*static_specified=*/false, 
+							/*param_mode=*/false) throws();
+			ConsumeOrError(tokens, {";"}) throws ();
+			tokens_guard.deactivate();
+			return ret;
+		}
+	} catch (Status status) {
+		
 	}
 
-	Stmt* ret = ParseExpr(context, tokens) throws ();
+	Stmt* ret = ParseExpr(context, tokens, /*disallow_infix=*/{}) throws ();
 	ConsumeOrError(tokens, {";"}) throws ();
 	return ret;
 }
@@ -1329,6 +1445,8 @@ FuncDecl* ParseFuncDecl(Context& context,
 	string name = id.parts[0];
 	LocationRef loc = id.loc;
 
+fprintf(stderr, "-- ParseFuncDecl %s\n", name.c_str());
+
 	auto PeekAndConsume = [&tokens](vector<string> look_for) {
 		return PeekAndConsumeUtil(tokens, look_for);
 	};
@@ -1355,24 +1473,29 @@ FuncDecl* ParseFuncDecl(Context& context,
 		parameters.push_back(ParseParamDecl(context, tokens));
 	}
 
+	bool is_prototype = false;
+	if(PeekAndConsume({";"})) {
+		is_prototype = true;
+	}
+
 	auto funcdecl = new FuncDecl(name, /*template_params=*/template_params, 
-								 return_type, parameters, /*body=*/{}, loc);
+								 return_type, parameters, 
+								 /*is_prototype=*/is_prototype,
+								 /*body=*/{}, loc);
 	// Add as soon as the signature is ready for recursion to find it
 	context.AddDecl(funcdecl);
 
-	if(PeekAndConsume({";"})) {
-		throw Status{.message="TODO: prototype"};
+	if(!is_prototype) {
+		ConsumeOrError(tokens, {"{"});
+
+		vector<Stmt*> body;
+
+		while(!PeekAndConsume({"}"})) {
+			body.push_back(ParseStmt(context, tokens));
+		}
+
+		funcdecl->SetBody(body);
 	}
-
-	ConsumeOrError(tokens, {"{"});
-
-	vector<Stmt*> body;
-
-	while(!PeekAndConsume({"}"})) {
-		body.push_back(ParseStmt(context, tokens));
-	}
-
-	funcdecl->SetBody(body);
 
 	tokens_guard.deactivate();
 

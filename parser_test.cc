@@ -448,7 +448,6 @@ int top(int x, int y) {
 	EXPECT_EQ(top_call->GetCallee()->GetRef()->GetName(), "sum");
 }
 
-
 DECLARE_TEST(FuncCallWrongArgs)
 {
 	const char* src = R"(
@@ -600,11 +599,10 @@ int top(int x, int y) {
 	assert(body.len() == 3);
 
 	EXPECT_NOT_NULL(compiler::AsA<compiler::VarDecl*>(body[0]));
+	EXPECT_EQ(compiler::AsA<compiler::VarDecl*>(body[0])->GetInitType(), 
+			  compiler::VarDeclInitType_Equals);
 	EXPECT_NOT_NULL(compiler::AsA<compiler::Expr*>(body[1]));
 	EXPECT_NOT_NULL(compiler::AsA<compiler::ReturnStmt*>(body[2]));
-
-
-
 }
 
 DECLARE_TEST(StructDecl)
@@ -662,6 +660,23 @@ fprintf(stderr, "%s\n", top->DebugString(0).c_str());
 	auto top_decl = compiler::AsA<compiler::VarDecl*>(top);
 	ASSERT(top_decl != nullptr);
 	EXPECT_NOT_NULL(compiler::AsA<compiler::IntType*>(top_decl->GetType()));
+}
+
+DECLARE_TEST(FunctionProto)
+{
+	const char* src = R"(
+int top();
+	)";
+
+	compiler::Decl* top = ParseAndGetTop(src);
+
+fprintf(stderr, ">>> %s\n", top->DebugString(0).c_str());
+
+	auto top_decl = compiler::AsA<compiler::FuncDecl*>(top);
+	ASSERT(top_decl != nullptr);
+	EXPECT_NOT_NULL(compiler::AsA<compiler::IntType*>(top_decl->GetReturnType()));
+	EXPECT_EQ(top_decl->GetParameters().len(), 0);
+	EXPECT_EQ(top_decl->GetTemplateParams().len(), 0);
 }
 
 DECLARE_TEST(StructParam)
@@ -731,22 +746,380 @@ int top(int x) {
 	)";
 
 	compiler::Expr* top = TestSingleFunctionSingleReturn(src);
-	EXPECT_EQ(CountNodes(top), 5);
+	EXPECT_EQ(CountNodes(top), 4);
 
 	fprintf(stderr, "%s\n", top->DebugString(0).c_str());
 
-	auto top_cast = compiler::AsA<compiler::CastExpr*>(top);
-	ASSERT(top_cast != nullptr);
-	EXPECT_EQ(top_cast->GetCastType(), compiler::CastType_CStyle);
+	auto top_call = compiler::AsA<compiler::CtorCall*>(top);
+	ASSERT(top_call != nullptr);
+}
+
+DECLARE_TEST(CppStyleCastUserType)
+{
+	const char* src = R"(
+
+struct Foo {
+
+};
+
+int doit(int x) {
+	return x;
+}
+
+int top(int x) {
+	return Foo(x+1) * doit(x);
+}
+	)";
+
+	compiler::Expr* top = TestSingleFunctionSingleReturn(src);
+	EXPECT_EQ(CountNodes(top), 7);
+
+	fprintf(stderr, "%s\n", top->DebugString(0).c_str());
+
+	auto top_bop = compiler::AsA<compiler::BinaryOp*>(top);
+	ASSERT(top_bop != nullptr);
+	EXPECT_EQ(top_bop->GetOp(), "*");
+
+	auto top_ctor = compiler::AsA<compiler::CtorCall*>(top_bop->GetLeft());
+	ASSERT(top_ctor != nullptr);
+
+	auto top_call = compiler::AsA<compiler::FuncCall*>(top_bop->GetRight());
+	ASSERT(top_call != nullptr);
+}
+
+DECLARE_TEST(CppStyleCastTemplatedUserType)
+{
+	const char* src = R"(
+
+template<typename T>
+struct Foo {
+
+};
+
+int top(int x) {
+	return Foo<int>(1);
+}
+	)";
+
+	compiler::Expr* top = TestSingleFunctionSingleReturn(src);
+	EXPECT_EQ(CountNodes(top), 2);
+
+	fprintf(stderr, "%s\n", top->DebugString(0).c_str());
+
+	auto top_ctor = compiler::AsA<compiler::CtorCall*>(top);
+	ASSERT(top_ctor != nullptr);
+}
+
+DECLARE_TEST(CppStyleCastTemplatedUserTypeWithTemplatedFunction)
+{
+	const char* src = R"(
+
+template<typename T>
+struct Foo {
+
+};
+
+template<typename T>
+int bar() {
+	return 0;	
+}
+
+int top(int x) {
+	return bar<int>();
+}
+	)";
+
+	compiler::Expr* top = TestSingleFunctionSingleReturn(src);
+	EXPECT_EQ(CountNodes(top), 1);
+
+	fprintf(stderr, "--- top ---\n%s\n", top->DebugString(0).c_str());
+
+	auto top_call = compiler::AsA<compiler::FuncCall*>(top);
+	ASSERT(top_call != nullptr);
+}
+
+// TODO: More template arg combinations
+
+DECLARE_TEST(TemplateFunctionIntParam)
+{
+	const char* src = R"(
+
+template<int N>
+int bar() {
+	return N;
+}
+
+int top(int x) {
+	return bar<2>();
+}
+	)";
+
+	compiler::Expr* top = TestSingleFunctionSingleReturn(src);
+	EXPECT_EQ(CountNodes(top), 1);
+
+	fprintf(stderr, "--- top ---\n%s\n", top->DebugString(0).c_str());
+
+	auto top_call = compiler::AsA<compiler::FuncCall*>(top);
+	ASSERT(top_call != nullptr);
+}
+
+DECLARE_TEST(FuncPtrTemplateFunctionIntParam)
+{
+	const char* src = R"(
+template<int N>
+int bar() {
+	return N;
+}
+
+int top(int x) {
+	return bar<2> > 2;
+}
+	)";
+
+	compiler::Expr* top = TestSingleFunctionSingleReturn(src);
+fprintf(stderr, "%s\n", top->DebugString(0).c_str());
+	EXPECT_EQ(CountNodes(top), 3);
+
+
+	auto top_bop = compiler::AsA<compiler::BinaryOp*>(top);
+	ASSERT(top_bop != nullptr);
+	EXPECT_EQ(top_bop->GetOp(), ">");
+
+	auto left_ref = compiler::AsA<compiler::DeclRef*>(top_bop->GetLeft());
+	ASSERT(left_ref != nullptr);
+	EXPECT_EQ(left_ref->GetTemplateArgs().len(), 1);
+	
+		auto left_func = compiler::AsA<compiler::FuncDecl*>(left_ref->GetRef());
+	ASSERT(left_func != nullptr);
+	EXPECT_EQ(left_func->GetName(), "bar");
 }
 
 
+DECLARE_TEST(FuncPtrTemplateFunctionIntParam2)
+{
+	// Doesn't compile on clang!
+	const char* src = R"(
+template<int N, typename T>
+T bar() {
+	return N;
+}
+
+int top(int x) {
+	return bar<2, int> > 2;
+}
+	)";
+
+	compiler::Expr* top = TestSingleFunctionSingleReturn(src);
+fprintf(stderr, "%s\n", top->DebugString(0).c_str());
+	EXPECT_EQ(CountNodes(top), 3);
+
+
+	auto top_bop = compiler::AsA<compiler::BinaryOp*>(top);
+	ASSERT(top_bop != nullptr);
+	EXPECT_EQ(top_bop->GetOp(), ">");
+
+	auto left_ref = compiler::AsA<compiler::DeclRef*>(top_bop->GetLeft());
+	ASSERT(left_ref != nullptr);
+	EXPECT_EQ(left_ref->GetTemplateArgs().len(), 2);
+	
+		auto left_func = compiler::AsA<compiler::FuncDecl*>(left_ref->GetRef());
+	ASSERT(left_func != nullptr);
+	EXPECT_EQ(left_func->GetName(), "bar");
+}
+
+DECLARE_TEST(FuncPtrTemplateFunctionIntParam3)
+{
+	// Doesn't compile on clang!
+	const char* src = R"(
+template<typename D, int N, typename T>
+T bar(D x) {
+	return x+N;
+}
+
+int top(int x) {
+	return bar<int, 2, int> > 2;
+}
+	)";
+
+	compiler::Expr* top = TestSingleFunctionSingleReturn(src);
+fprintf(stderr, "%s\n", top->DebugString(0).c_str());
+	EXPECT_EQ(CountNodes(top), 3);
+
+
+	auto top_bop = compiler::AsA<compiler::BinaryOp*>(top);
+	ASSERT(top_bop != nullptr);
+	EXPECT_EQ(top_bop->GetOp(), ">");
+
+	auto left_ref = compiler::AsA<compiler::DeclRef*>(top_bop->GetLeft());
+	ASSERT(left_ref != nullptr);
+	EXPECT_EQ(left_ref->GetTemplateArgs().len(), 3);
+	
+		auto left_func = compiler::AsA<compiler::FuncDecl*>(left_ref->GetRef());
+	ASSERT(left_func != nullptr);
+	EXPECT_EQ(left_func->GetName(), "bar");
+}
+
+DECLARE_TEST(VarDeclCtorEmpty)
+{
+	const char* src = R"(
+struct Foo {
+
+};
+int top(int x, int y) {
+	Foo r();
+	return x;
+}
+	)";
+
+	vector<compiler::Stmt*> body = ParseAndGetTopBody(src);
+	assert(body.len() == 2);
+
+	EXPECT_NOT_NULL(compiler::AsA<compiler::VarDecl*>(body[0]));
+	EXPECT_NOT_NULL(compiler::AsA<compiler::ReturnStmt*>(body[1]));
+}
+
+DECLARE_TEST(GlobalCtor)
+{
+	const char* src = R"(
+struct Foo {
+
+};
+Foo top;
+	)";
+
+	compiler::Decl* top = ParseAndGetTop(src);
+
+fprintf(stderr, "%s\n", top->DebugString(0).c_str());
+
+	auto top_decl = compiler::AsA<compiler::VarDecl*>(top);
+	ASSERT(top_decl != nullptr);
+	EXPECT_EQ(top_decl->GetInitType(), compiler::VarDeclInitType_None);
+	EXPECT_NOT_NULL(compiler::AsA<compiler::StructDecl*>(top_decl->GetType()));
+}
+
+
+DECLARE_TEST(PreferFunctionOverGlobalDecl)
+{
+	const char* src = R"(
+struct Foo {
+
+};
+Foo top() {
+
+}
+	)";
+
+	compiler::Decl* top = ParseAndGetTop(src);
+
+fprintf(stderr, "%s\n", top->DebugString(0).c_str());
+
+	auto top_decl = compiler::AsA<compiler::FuncDecl*>(top);
+	ASSERT(top_decl != nullptr);
+	EXPECT_NOT_NULL(compiler::AsA<compiler::StructDecl*>(top_decl->GetReturnType()));
+}
+
+
+DECLARE_TEST(PreferFunctionProtoOverGlobalDecl)
+{
+	const char* src = R"(
+struct Foo {
+
+};
+Foo top();
+	)";
+
+	compiler::Decl* top = ParseAndGetTop(src);
+
+fprintf(stderr, "%s\n", top->DebugString(0).c_str());
+
+	auto top_decl = compiler::AsA<compiler::FuncDecl*>(top);
+	ASSERT(top_decl != nullptr);
+	EXPECT_NOT_NULL(compiler::AsA<compiler::StructDecl*>(top_decl->GetReturnType()));
+}
+
+DECLARE_TEST(CtorCallAsStmtEmpty)
+{
+	const char* src = R"(
+struct Foo {
+
+};
+int top(int x, int y) {
+	Foo();
+	return 0;
+}
+	)";
+
+	vector<compiler::Stmt*> body = ParseAndGetTopBody(src);
+	assert(body.len() == 2);
+
+	EXPECT_NOT_NULL(compiler::AsA<compiler::CtorCall*>(body[0]));
+	EXPECT_NOT_NULL(compiler::AsA<compiler::ReturnStmt*>(body[1]));
+}
+
+DECLARE_TEST(CtorCallAsStmt)
+{
+	const char* src = R"(
+struct Foo {
+};
+int top(int x, int y) {
+	Foo(x);
+	return 0;
+}
+	)";
+
+	vector<compiler::Stmt*> body = ParseAndGetTopBody(src);
+	assert(body.len() == 2);
+
+	EXPECT_NOT_NULL(compiler::AsA<compiler::CtorCall*>(body[0]));
+	EXPECT_NOT_NULL(compiler::AsA<compiler::ReturnStmt*>(body[1]));
+}
+
+DECLARE_TEST(VarDeclCtor)
+{
+	const char* src = R"(
+struct Foo {
+};
+int top(int x, int y) {
+	Foo a(x, y);
+	return 0;
+}
+	)";
+
+	vector<compiler::Stmt*> body = ParseAndGetTopBody(src);
+	assert(body.len() == 2);
+
+	EXPECT_NOT_NULL(compiler::AsA<compiler::VarDecl*>(body[0]));
+	EXPECT_EQ(compiler::AsA<compiler::VarDecl*>(body[0])->GetInitType(),
+			  compiler::VarDeclInitType_Ctor);
+	EXPECT_NOT_NULL(compiler::AsA<compiler::ReturnStmt*>(body[1]));
+}
+
+DECLARE_TEST(VarDeclInitList)
+{
+	const char* src = R"(
+struct Foo {
+
+};
+int top(int x, int y) {
+	Foo a {x, y};
+	return 0;
+}
+	)";
+
+	vector<compiler::Stmt*> body = ParseAndGetTopBody(src);
+	assert(body.len() == 2);
+
+	EXPECT_NOT_NULL(compiler::AsA<compiler::VarDecl*>(body[0]));
+	EXPECT_EQ(compiler::AsA<compiler::VarDecl*>(body[0])->GetInitType(),
+			  compiler::VarDeclInitType_InitList);
+	EXPECT_NOT_NULL(compiler::AsA<compiler::ReturnStmt*>(body[1]));
+}
+
+// Template int params (remove comma operator stuff)
+
+// TODO: Check that proto decl is linked to main decl
 
 // Typedef
-// CPP style case with user defined type
-
-
-// Foo f() as function not decl
 
 // Template instantiation
 

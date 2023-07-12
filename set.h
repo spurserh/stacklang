@@ -68,6 +68,12 @@ public:
 		}
 		storage_ = new_storage;
 	}
+	void remove(set other) {
+		for(T v : other) {
+			remove(v);
+		}
+	}
+
 
 	T get(T value)const throws(Status) {
 		// TODO: Inefficient
