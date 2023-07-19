@@ -642,6 +642,65 @@ private:
 	bool declared_class_;
 };
 
+class TypedefDecl : public Decl, public Type {
+public:
+	TypedefDecl(string name, Type* base, LocationRef loc) 
+		: Decl(name, loc), base_(base) {
+	}
+	~TypedefDecl() {
+	}
+
+	Type* GetBase()const {
+		return base_;
+	}
+
+	string DebugString(int64 indent)const override {
+		return string("typedef ") + GetName() + ": " + base_->DebugString(indent);
+	}
+private:
+	Type* base_ = nullptr;
+};
+
+class UsingDecl : public TemplatedDecl, public Type {
+public:
+	UsingDecl(string name,
+			  Type* base,
+			  LocationRef loc,
+			  vector<TemplateParam*> template_params = {}) 
+		: TemplatedDecl(name, template_params, loc), base_(base) {
+	}
+	~UsingDecl() {
+	}
+
+	Type* GetBase()const {
+		return base_;
+	}
+
+	string DebugString(int64 indent)const override {
+		return string("using(") + GetName() + "): " + base_->DebugString(indent);
+	}
+private:
+	Type* base_ = nullptr;
+};
+
+class UsingAliasDecl : public UsingDecl {
+public:
+	UsingAliasDecl(string name, 
+				   Type* base, 
+				   vector<TemplateParam*> template_params, 
+				   LocationRef loc) 
+		: UsingDecl(name, base, loc, template_params) {
+	}
+	~UsingAliasDecl() {
+	}
+
+	string DebugString(int64 indent)const override {
+		return TemplateParamsString() + 
+				string("using(") + GetName() + ") =  " +
+				GetBase()->DebugString(indent);
+	}
+};
+
 class Namespace {
 public:
 	Namespace() : name_("") {}
@@ -660,7 +719,7 @@ public:
   	string GetName() {
   		return name_;
   	}
-  	void AddNested(Namespace nested) {
+  	void AddNested(Namespace* nested) {
   		// TODO: Throw on duplicate
   		nested_.push_back(nested);
   	}
@@ -677,7 +736,7 @@ public:
 private:
  	string name_;
  	LocationRef loc_;
- 	vector<Namespace> nested_;
+ 	vector<Namespace*> nested_;
  	vector<Decl*> decls_;
 };
 
@@ -753,6 +812,7 @@ struct Token {
 
 struct ContextFrame {
 	Namespace* in_namespace = nullptr;
+	Namespace* top_namespace = nullptr;
 	map<string, Decl*> decls;
 };
 
@@ -872,6 +932,10 @@ Identifier ConsumeIdentifierFromSingleToken(vector<Token>& tokens) throws(Status
 	Token name_tok = tokens.pop_front();
 	IsValidID(name_tok.content, name_tok.loc) throws();
 	return {.global = false, .parts = {name_tok.content}, .loc = name_tok.loc};
+}
+
+Decl* GetDeclByIdentifier(Namespace* in_namespace, Identifier id) throws(Status) {
+	
 }
 
 Decl* GetDeclByIdentifier(Context& context, Identifier id) throws(Status) {
@@ -1506,13 +1570,54 @@ StructDecl* ParseStructDecl(Context& context,
 							vector<Token>& tokens,
 							vector<TemplateParam*> template_params) throws();
 
+// Consumes ;
+TypedefDecl* ParseTypedef(Context& context,
+						  vector<Token>& tokens) {
+	Type* type = ParseType(context, tokens);
+	Identifier id = ConsumeIdentifierFromSingleToken(tokens);
+	ConsumeOrError(tokens, {";"});
+	return new TypedefDecl(id.parts[0], type, id.loc);
+}
+
+// Consumes the ;
+UsingDecl* ParseUsing(Context& context,
+					  vector<Token>& tokens,
+					  vector<TemplateParam*> template_params) {
+	Identifier id = ParseIdentifier(tokens) throws();
+	if(PeekAndConsumeUtil(tokens, {"="})) {
+		if(id.global || id.parts.len() > 1) {
+			throw Status{.message = "Using = can't specify qualified identifier as alias"};
+		}
+fprintf(stderr, "--- ParseUsing %s = %s\n", id.parts.back().c_str(), tokens[0].content.c_str());
+		// TODO: Apply template params
+		Type* base = ParseType(context, tokens) throws();
+fprintf(stderr, "----- base %s\n", base->DebugString(0).c_str());
+		ConsumeOrError(tokens, {";"});
+		return new UsingAliasDecl(id.parts[0],
+							 base,
+							 template_params, 
+							 id.loc);
+	}
+	if(template_params.len() > 0) {
+		throw Status{.message = "Using can't have template params unless aliasing"};		
+	}
+fprintf(stderr, "ParseUsing id %s\n", id.DebugString().c_str());
+	Decl* decl = GetDeclByIdentifier(context, id) throws();
+	auto type = AsA<Type*>(decl);
+	if(type == nullptr) {
+		throw Status{.message = "Using declaration must be on type name"};		
+	}
+	ConsumeOrError(tokens, {";"});
+	return new UsingDecl(id.parts.back(),
+						 type, 
+			  			 id.loc);
+}
+
 // Consumes the ;
 Decl* ParseDecl(Context& context, vector<Token>& tokens) {
 	auto PeekAndConsume = [&tokens](vector<string> look_for) {
 		return PeekAndConsumeUtil(tokens, look_for);
 	};
-
-	vector<TemplateParam*> template_params;
 
 	context.PushFrame();
 	auto template_context_pop_guard = MakeLambdaGuard(
@@ -1520,15 +1625,18 @@ Decl* ParseDecl(Context& context, vector<Token>& tokens) {
 			context.PopFrame();
 	});
 
+
+	if(PeekAndConsume({"typedef"})) {
+		return ParseTypedef(context, tokens);
+	}
+
+	vector<TemplateParam*> template_params;
 	if(PeekAndConsume({"template"})) {
 		template_params = ParseTemplateParams(context, tokens);
 	}
 
-	if(PeekAndConsume({"typedef"})) {
-		throw Status{.message="TODO: typedef"};
-	}
 	if(PeekAndConsume({"using"})) {
-		throw Status{.message="TODO: using"};
+		return ParseUsing(context, tokens, template_params);
 	}
 	if(PeekForAnyUtil(tokens, {"class", "struct"})) {
 		return ParseStructDecl(context, tokens, template_params);
@@ -1619,7 +1727,7 @@ void ParseNamespaceContents(Context& context,
 	});
 
 	int64 debug_prev_token_count = -1;
-	while(!tokens.empty()) {
+	while(!tokens.empty() && !PeekAndConsumeUtil(tokens, {"}"})) {
 		assert(debug_prev_token_count != tokens.len());
 		debug_prev_token_count = tokens.len();
 
@@ -1629,9 +1737,11 @@ void ParseNamespaceContents(Context& context,
 				throw Status{.message="Expected { after", .loc=name_tok.loc};
 			}
 
-			Namespace nested(name_tok.content, name_tok.loc);
-			context.frames.push_back(ContextFrame{.in_namespace = &nested});
-			ParseNamespaceContents(context, tokens, nested);
+			ContextFrame prev_frame = context.frames.back();
+			auto nested = new Namespace(name_tok.content, name_tok.loc);
+			context.frames.push_back(ContextFrame{.in_namespace = nested, 
+												  .top_namespace = prev_frame.top_namespace});
+			ParseNamespaceContents(context, tokens, *nested);
 			result.AddNested(nested);
 		}
 

@@ -1115,14 +1115,60 @@ int top(int x, int y) {
 	EXPECT_NOT_NULL(compiler::AsA<compiler::ReturnStmt*>(body[1]));
 }
 
-// Template int params (remove comma operator stuff)
+DECLARE_TEST(Typedef)
+{
+	const char* src = R"(
+typedef int Integer;
+int top(int x, Integer y) {
+	return y;
+}
+	)";
+
+	compiler::Expr* top = TestSingleFunctionSingleReturn(src);
+
+
+	compiler::DeclRef* decl_ref = nullptr;
+	EXPECT_NOT_NULL(decl_ref = compiler::AsA<compiler::DeclRef*>(top));
+	compiler::VarDecl* param_decl = nullptr;
+	EXPECT_NOT_NULL(param_decl = compiler::AsA<compiler::VarDecl*>(decl_ref->GetRef()));
+	compiler::TypedefDecl* typedef_decl = nullptr;
+	EXPECT_NOT_NULL(typedef_decl = compiler::AsA<compiler::TypedefDecl*>(param_decl->GetType()));
+	EXPECT_EQ(typedef_decl->GetName(), "Integer");
+}
+
+DECLARE_TEST(Using)
+{
+	const char* src = R"(
+namespace Space {
+using Integer = int;
+}
+
+using Space::Integer;
+
+int top(int x, Integer y) {
+	Integer f = 10;
+	return f;
+}
+	)";
+
+	compiler::Expr* top = TestSingleFunctionSingleReturn(src);
+
+	compiler::DeclRef* decl_ref = nullptr;
+	EXPECT_NOT_NULL(decl_ref = compiler::AsA<compiler::DeclRef*>(top));
+	compiler::VarDecl* param_decl = nullptr;
+	EXPECT_NOT_NULL(param_decl = compiler::AsA<compiler::VarDecl*>(decl_ref->GetRef()));
+	compiler::TypedefDecl* typedef_decl = nullptr;
+	EXPECT_NOT_NULL(typedef_decl = compiler::AsA<compiler::TypedefDecl*>(param_decl->GetType()));
+	EXPECT_EQ(typedef_decl->GetName(), "Integer");
+}
+
+// TODO: Using templated
 
 // TODO: Check that proto decl is linked to main decl
 
-// Typedef
-
 // Template instantiation
 
+// TODO: Test error messages (better forks in parser code)
 
 }  // namespace
 }  // namespace stacklang
